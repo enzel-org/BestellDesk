@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Adminbereich</title>
+</head>
+<body>
+    <h1>Adminbereich</h1>
+
+    {% if not session.logged_in %}
+        <form method="post">
+            <label>Benutzername: <input type="text" name="username"></label><br>
+            <label>Passwort: <input type="password" name="password"></label><br>
+            <button type="submit">Einloggen</button>
+        </form>
+        {% if fehler %}
+            <p style="color: red;">{{ fehler }}</p>
+        {% endif %}
+    {% else %}
+        <p>Willkommen im Adminbereich!</p>
+        <a href="/admin/bestellungen">Bestellungen anzeigen</a><br>
+        <a href="/admin/logout">Logout</a>
+    {% endif %}
+</body>
+</html>

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Alle Bestellungen</title>
+</head>
+<body>
+    <h1>Bestellungen</h1>
+
+    {% if bestellungen %}
+        {% for bestellung in bestellungen %}
+            <div style="margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 10px;">
+                <strong>Name:</strong> {{ bestellung.name }}<br>
+                <strong>Gerichte:</strong>
+                <ul>
+                    {% for gericht in bestellung.gerichte %}
+                        <li>
+                            {{ gericht.nr }} – {{ gericht.name }} – {{ gericht.preis }} €
+                            {% if gericht.schaerfegrad %} ({{ gericht.schaerfegrad }}){% endif %}
+                            {% if gericht.notiz %} – Notiz: {{ gericht.notiz }}{% endif %}
+                        </li>
+                    {% endfor %}
+                </ul>
+                <form method="post" action="/admin/bestellung/loeschen/{{ bestellung._id }}" onsubmit="return confirm('Wirklich löschen?');">
+                    <button type="submit">Diese Bestellung löschen</button>
+                </form>
+            </div>
+        {% endfor %}
+
+        <form method="post" action="/admin/bestellungen/alle-loeschen" onsubmit="return confirm('Alle Bestellungen wirklich löschen?');">
+            <button type="submit" style="margin-top: 20px;">Alle Bestellungen löschen</button>
+        </form>
+    {% else %}
+        <p>Keine Bestellungen vorhanden.</p>
+    {% endif %}
+
+    <a href="/admin">Zurück zum Adminbereich</a>
+</body>
+</html>
