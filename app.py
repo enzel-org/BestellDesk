@@ -73,7 +73,24 @@ def admin_bestellungen():
         return redirect(url_for("admin_login"))
 
     bestellungen_liste = list(bestellungen.find())
-    return render_template("admin_bestellungen.html", bestellungen=bestellungen_liste)
+    gesamtpreis = 0
+
+    for b in bestellungen_liste:
+        summe = sum(g.get("preis", 0) for g in b.get("gerichte", []))
+        b["summe"] = round(summe, 2)
+
+        zahlung = b.get("zahlung", {})
+        betrag = zahlung.get("betrag", 0)
+        if not zahlung.get("rueckgeld_gegeben"):
+            b["rueckgeld"] = round(betrag - summe, 2) if betrag > summe else 0
+        else:
+            b["rueckgeld"] = None
+
+        gesamtpreis += summe
+
+    return render_template("admin_bestellungen.html",
+                           bestellungen=bestellungen_liste,
+                           gesamtpreis=round(gesamtpreis, 2))
 
 # Admin Bestellung Löschen
 @app.route("/admin/bestellung/loeschen/<bestell_id>", methods=["POST"])
@@ -92,6 +109,70 @@ def bestellungen_loeschen_alle():
 
     bestellungen.delete_many({})
     return redirect(url_for("admin_bestellungen"))
+
+# Admin Bestellung edit
+@app.route("/admin/bestellung/bearbeiten/<bestell_id>", methods=["GET", "POST"])
+def bestellung_bearbeiten(bestell_id):
+    if not session.get("logged_in"):
+        return redirect(url_for("admin_login"))
+
+    bestellung = bestellungen.find_one({"_id": ObjectId(bestell_id)})
+
+    if not bestellung:
+        return "Bestellung nicht gefunden", 404
+
+    if request.method == "POST":
+        name = request.form.get("name")
+        gerichte = []
+
+        i = 0
+        while True:
+            prefix = f"gericht_{i}_"
+            if f"{prefix}name" not in request.form:
+                break
+            gerichte.append({
+                "nr": request.form.get(f"{prefix}nr"),
+                "name": request.form.get(f"{prefix}name"),
+                "preis": float(request.form.get(f"{prefix}preis")),
+                "schaerfegrad": request.form.get(f"{prefix}schaerfegrad"),
+                "notiz": request.form.get(f"{prefix}notiz")
+            })
+            i += 1
+
+        bestellungen.update_one(
+            {"_id": ObjectId(bestell_id)},
+            {"$set": {"name": name, "gerichte": gerichte}}
+        )
+        return redirect(url_for("admin_bestellungen"))
+
+    return render_template("admin_bearbeiten.html", bestellung=bestellung)
+
+# Admin ist bezahlt?
+@app.route("/admin/bestellung/zahlung/<bestell_id>", methods=["POST"])
+def bestellung_zahlung_speichern(bestell_id):
+    if not session.get("logged_in"):
+        return redirect(url_for("admin_login"))
+
+    betrag_raw = request.form.get("betrag", "0").replace(",", ".").strip()
+    try:
+        betrag = float(betrag_raw) if betrag_raw else 0.0
+    except ValueError:
+        betrag = 0.0
+
+    zahlung = {
+        "erhalten": request.form.get("erhalten") == "on",
+        "betrag": betrag,
+        "rueckgeld_gegeben": request.form.get("rueckgeld_gegeben") == "on"
+    }
+
+    bestellungen.update_one(
+        {"_id": ObjectId(bestell_id)},
+        {"$set": {"zahlung": zahlung}}
+    )
+
+    return redirect(url_for("admin_bestellungen"))
+    #return "", 204  # Erfolgreich, kein Content
+
 
 # App starten
 if __name__ == "__main__":

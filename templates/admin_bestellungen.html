@@ -3,33 +3,108 @@
 <head>
     <meta charset="UTF-8">
     <title>Alle Bestellungen</title>
+    <style>
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        th, td {
+            padding: 6px 10px;
+            border: 1px solid #ccc;
+            text-align: left;
+            vertical-align: top;
+        }
+        form {
+            margin: 0;
+        }
+        .btns {
+            display: flex;
+            gap: 6px;
+            margin-top: 5px;
+        }
+    </style>
 </head>
 <body>
     <h1>Bestellungen</h1>
 
     {% if bestellungen %}
-        {% for bestellung in bestellungen %}
-            <div style="margin-bottom: 20px; border-bottom: 1px solid #ccc; padding-bottom: 10px;">
-                <strong>Name:</strong> {{ bestellung.name }}<br>
-                <strong>Gerichte:</strong>
-                <ul>
-                    {% for gericht in bestellung.gerichte %}
-                        <li>
-                            {{ gericht.nr }} – {{ gericht.name }} – {{ gericht.preis }} €
-                            {% if gericht.schaerfegrad %} ({{ gericht.schaerfegrad }}){% endif %}
-                            {% if gericht.notiz %} – Notiz: {{ gericht.notiz }}{% endif %}
-                        </li>
-                    {% endfor %}
-                </ul>
-                <form method="post" action="/admin/bestellung/loeschen/{{ bestellung._id }}" onsubmit="return confirm('Wirklich löschen?');">
-                    <button type="submit">Diese Bestellung löschen</button>
-                </form>
-            </div>
-        {% endfor %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Gerichte</th>
+                    <th>Summe</th>
+                    <th>Zahlung</th>
+                    <th>Aktionen</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for bestellung in bestellungen %}
+                    <form method="post" action="/admin/bestellung/zahlung/{{ bestellung._id }}">
+                        <tr>
+                            <td>{{ bestellung.name }}</td>
+                            <td>
+                                <ul>
+                                    {% for gericht in bestellung.gerichte %}
+                                        <li>
+                                            {{ gericht.nr }} – {{ gericht.name }} – {{ gericht.preis }} €
+                                            {% if gericht.schaerfegrad %} ({{ gericht.schaerfegrad }}){% endif %}
+                                            {% if gericht.notiz %} – {{ gericht.notiz }}{% endif %}
+                                        </li>
+                                    {% endfor %}
+                                </ul>
+                            </td>
+                            <td>{{ "%.2f"|format(bestellung.summe) }} €</td>
+                            <td>
+                                <label>
+                                    Bezahlt:
+                                    <input type="number" step="0.01" name="betrag" value="{{ bestellung.get('zahlung', {}).get('betrag', 0) }}">
+                                </label><br>
+                                <label>
+                                    Geld erhalten:
+                                    <input type="checkbox" name="erhalten"
+                                        {% if bestellung.get('zahlung', {}).get('erhalten')
+                                            or (bestellung.get('zahlung', {}).get('betrag', 0) >= bestellung.summe) %}checked{% endif %}>
+                                </label><br>
+                                {% if bestellung.rueckgeld is not none %}
+                                    <label>
+                                        Rückgeld: {{ "%.2f"|format(bestellung.rueckgeld) }} €
+                                    </label><br>
+                                {% else %}
+                                    Rückgeld: ✔️<br>
+                                {% endif %}
+
+                                <label>
+                                    Rückgeld gegeben:
+                                    <input type="checkbox" name="rueckgeld_gegeben"
+                                        {% if bestellung.get('zahlung', {}).get('betrag', 0) >= bestellung.summe and (
+                                                bestellung.get('zahlung', {}).get('rueckgeld_gegeben')
+                                                or bestellung.get('rueckgeld', 0) == 0
+                                        ) %}checked{% endif %}>
+                                </label>
+                            </td>
+                            <td class="btns">
+                                <button type="submit">💾</button>
+                                </form>
+                                <form method="get" action="/admin/bestellung/bearbeiten/{{ bestellung._id }}">
+                                    <button type="submit">✏️</button>
+                                </form>
+                                <form method="post" action="/admin/bestellung/loeschen/{{ bestellung._id }}"
+                                        onsubmit="return confirm('Wirklich löschen?');">
+                                    <button type="submit">🗑️</button>
+                                </form>
+                            </td>
+                        </tr>
+                    </form>
+                {% endfor %}
+            </tbody>
+        </table>
 
         <form method="post" action="/admin/bestellungen/alle-loeschen" onsubmit="return confirm('Alle Bestellungen wirklich löschen?');">
             <button type="submit" style="margin-top: 20px;">Alle Bestellungen löschen</button>
         </form>
+
+        <h3 style="margin-top: 30px;">Gesamtpreis aller Bestellungen: {{ gesamtpreis }} €</h3>
     {% else %}
         <p>Keine Bestellungen vorhanden.</p>
     {% endif %}
