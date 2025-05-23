@@ -1,0 +1,49 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+}
+
+.lieferant-form {
+    margin-bottom: 20px;
+}
+
+.lieferanten-liste {
+    list-style: none;
+    padding: 0;
+}
+
+.lieferant-box {
+    padding: 10px;
+    border: 1px solid #ccc;
+    background: #f9f9f9;
+    margin-bottom: 10px;
+}
+
+.lieferant-box.aktiv {
+    border-left: 5px solid green;
+}
+
+.kopfzeile {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.badge {
+    background: green;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.8em;
+}
+
+.aktion-buttons {
+    margin-top: 10px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.aktion-buttons form {
+    display: inline;
+}
