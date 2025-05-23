@@ -308,6 +308,46 @@ def admin_zeitfenster():
     return render_template("admin_zeitfenster.html", einstellung=einstellung)
 
 
+# Admin Bestellvorschau
+@app.route("/admin/bestellvorschau", methods=["GET", "POST"])
+def admin_bestellvorschau():
+    if not session.get("logged_in"):
+        return redirect(url_for("admin_login"))
+
+    alle_bestellungen = list(bestellungen.find())
+    gericht_counter = {}
+
+    for bestellung in alle_bestellungen:
+        for gericht in bestellung.get("gerichte", []):
+            key = (
+                gericht.get("nr", ""),
+                gericht.get("name", ""),
+                gericht.get("schaerfegrad", ""),
+                gericht.get("notiz", "")
+            )
+            gericht_counter[key] = gericht_counter.get(key, 0) + 1
+
+    zusammenfassung = []
+    for (nr, name, schaerfegrad, notiz), count in gericht_counter.items():
+        zeile = f"{count}x Nr.{nr} {name}"
+        if schaerfegrad and schaerfegrad.lower() != "keine":
+            zeile += f" ({schaerfegrad})"
+        if notiz:
+            zeile += f" – {notiz}"
+        zusammenfassung.append(zeile)
+
+    vorschau_text = "\n".join(zusammenfassung)
+
+    firmen_liste = list(einstellungen.find({"typ": "firma"}))
+    zeitfenster = einstellungen.find_one({"typ": "zeitfenster"})
+    zustaendig_name = zeitfenster.get("name", "") if zeitfenster else ""
+
+    return render_template("admin_bestellvorschau.html",
+        vorschau=vorschau_text,
+        firmen=firmen_liste,
+        zustaendig=zustaendig_name
+    )
+
 # App starten
 if __name__ == "__main__":
     app.run(debug=True)

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Bestellvorschau</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='admin_bestellvorschau.css') }}">
+</head>
+<body>
+    <h1>Bestellvorschau</h1>
+
+    {% if vorschau %}
+        <form method="post" action="/admin/bestellvorschau/senden">
+            <div class="vorschau-box">
+                <label for="firma">Firma:</label>
+                <select name="firma" id="firma">
+                    {% for eintrag in firmen %}
+                        <option value="{{ eintrag.name }}">{{ eintrag.name }}</option>
+                    {% endfor %}
+                </select><br><br>
+
+                <label for="adresse">Lieferadresse:</label>
+                <input type="text" name="adresse" id="adresse" required><br><br>
+
+                <label for="nachricht">Nachricht an Lieferanten:</label><br>
+                <textarea name="nachricht" id="nachricht">Guten Tag, hier ist die Firma {{ firmen[0].name if firmen else '...' }}.
+Mein Name ist {{ zustaendig }} und wir würden gerne Folgendes bestellen:
+
+{{ vorschau }}
+
+Bitte liefern Sie an folgende Adresse: ...</textarea>
+            </div>
+            <button type="submit">Per WhatsApp senden</button>
+        </form>
+    {% else %}
+        <p>Keine Bestellungen vorhanden.</p>
+    {% endif %}
+
+    <br>
+    <a href="/admin">Zurück zum Adminbereich</a>
+</body>
+</html>
