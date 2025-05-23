@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, render_template, session, redirect, u
 from pymongo import MongoClient
 from dotenv import load_dotenv
 from bson.objectid import ObjectId
+from datetime import datetime
 import os
 
 # .env laden
@@ -22,7 +23,27 @@ app.secret_key = os.getenv("SECRET_KEY", "dev_default_key")
 @app.route("/")
 def bestellseite():
     lieferant = lieferanten.find_one({"aktiv": True})
-    return render_template("bestellung.html", lieferant=lieferant)
+    einstellung = einstellungen.find_one({"typ": "zeitfenster"})
+
+    bestellbar = True
+    hinweis = ""
+
+    if einstellung:
+        von = einstellung.get("von")
+        bis = einstellung.get("bis")
+        name = einstellung.get("name", "")
+        now = datetime.now().time()
+
+        try:
+            von_time = datetime.strptime(von, "%H:%M").time()
+            bis_time = datetime.strptime(bis, "%H:%M").time()
+            bestellbar = von_time <= now <= bis_time
+            hinweis = f"Bestellungen sind im Zeitraum {von} Uhr bis {bis} Uhr bei {name} möglich."
+        except:
+            bestellbar = True  # Falls Eingabe ungültig ist
+
+    return render_template("bestellung.html", lieferant=lieferant, bestellbar=bestellbar, hinweis=hinweis)
+
 
 # Bestellung absenden (API)
 @app.route("/api/bestellung", methods=["POST"])
@@ -260,6 +281,32 @@ def lieferant_bearbeiten(lieferant_id):
 
     lieferant["whatsapp"] = lieferant.get("whatsapp_nummer", "")
     return render_template("admin_lieferant_bearbeiten.html", lieferant=lieferant)
+
+# Admin Zeitfenster
+@app.route("/admin/zeitfenster", methods=["GET", "POST"])
+def admin_zeitfenster():
+    if not session.get("logged_in"):
+        return redirect(url_for("admin_login"))
+
+    einstellung = einstellungen.find_one({"typ": "zeitfenster"})
+    if request.method == "POST":
+        von = request.form.get("von")
+        bis = request.form.get("bis")
+        name = request.form.get("name")
+
+        einstellungen.update_one(
+            {"typ": "zeitfenster"},
+            {"$set": {
+                "von": von,
+                "bis": bis,
+                "name": name
+            }},
+            upsert=True
+        )
+        return redirect(url_for("admin_zeitfenster"))
+
+    return render_template("admin_zeitfenster.html", einstellung=einstellung)
+
 
 # App starten
 if __name__ == "__main__":

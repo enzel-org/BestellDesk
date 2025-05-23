@@ -9,6 +9,14 @@
 <body>
     <h1>Bestellung aufgeben</h1>
 
+    {% if hinweis %}
+        <p><em>{{ hinweis }}</em></p>
+    {% endif %}
+
+    {% if not bestellbar %}
+        <p style="color:red;"><strong>Außerhalb des Bestellzeitraums.</strong> Eine Bestellung ist derzeit nicht möglich.</p>
+    {% else %}
+
     {% if lieferant %}
     <div class="lieferant-box">
         <strong>Heute bestellen wir bei: {{ lieferant.name }}</strong><br>
@@ -157,5 +165,6 @@
             });
         });
     </script>
+    {% endif %}
 </body>
 </html>
