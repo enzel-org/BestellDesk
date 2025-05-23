@@ -4,26 +4,7 @@
     <meta charset="UTF-8">
     <title>Alle Bestellungen</title>
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
-    <style>
-        table {
-            border-collapse: collapse;
-            width: 100%;
-        }
-        th, td {
-            padding: 6px 10px;
-            border: 1px solid #ccc;
-            text-align: left;
-            vertical-align: top;
-        }
-        form {
-            margin: 0;
-        }
-        .btns {
-            display: flex;
-            gap: 6px;
-            margin-top: 5px;
-        }
-    </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='admin_bestellungen.css') }}">
 </head>
 <body>
     <h1>Bestellungen</h1>

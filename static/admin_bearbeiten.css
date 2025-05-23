@@ -1,0 +1,13 @@
+form {
+    margin-bottom: 20px;
+}
+
+fieldset {
+    margin-bottom: 10px;
+    padding: 10px;
+    border: 1px solid #ccc;
+}
+
+legend {
+    font-weight: bold;
+}
