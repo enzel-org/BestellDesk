@@ -55,7 +55,12 @@
                                     {% endfor %}
                                 </ul>
                             </td>
-                            <td>{{ "%.2f"|format(bestellung.summe) }} €</td>
+                            <td>
+                                {{ "%.2f"|format(bestellung.summe) }} €<br>
+                                {% if bestellung.lieferkosten %}
+                                    <small>inkl. {{ "%.2f"|format(bestellung.lieferkosten) }} € Versandkosten</small>
+                                {% endif %}
+                            </td>
                             <td>
                                 <label>
                                     Bezahlt:

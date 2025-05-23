@@ -18,10 +18,28 @@
         .gericht-eintrag {
             margin-bottom: 5px;
         }
+        .lieferant-box {
+            background: #f9f9f9;
+            padding: 10px;
+            border: 1px solid #ccc;
+            margin-bottom: 20px;
+        }
     </style>
 </head>
 <body>
     <h1>Bestellung aufgeben</h1>
+
+    {% if lieferant %}
+    <div class="lieferant-box">
+        <strong>Heute bestellen wir bei: {{ lieferant.name }}</strong><br>
+        {% if lieferant.menu_typ == "link" %}
+            <a href="{{ lieferant.menu_info }}" target="_blank">Speisekarte öffnen</a><br>
+        {% elif lieferant.menu_typ == "text" %}
+            <em>{{ lieferant.menu_info }}</em><br>
+        {% endif %}
+        <small>Versandkosten: {{ "%.2f"|format(lieferant.versand_pro_person) }} € pro Person</small>
+    </div>
+    {% endif %}
 
     <form id="bestell-formular">
         <label for="name">Dein Name:</label>
@@ -36,6 +54,12 @@
     <div id="zusammenfassung">
         <h3>Zusammenfassung</h3>
         <div id="gericht-liste"></div>
+        <div>Zwischensumme: <span id="zwischensumme">0.00</span> €</div>
+        {% if lieferant %}
+            <div>Versandkosten: <span id="versandkosten">{{ "%.2f"|format(lieferant.versand_pro_person) }}</span> €</div>
+        {% else %}
+            <div>Versandkosten: <span id="versandkosten">0.00</span> €</div>
+        {% endif %}
         <strong>Gesamtpreis: <span id="gesamtpreis">0.00</span> €</strong>
     </div>
 
@@ -43,30 +67,33 @@
         document.addEventListener("DOMContentLoaded", function () {
             const gerichteContainer = document.getElementById("gerichte-container");
             const gerichtListe = document.getElementById("gericht-liste");
+            const zwischensummeAnzeige = document.getElementById("zwischensumme");
             const gesamtpreisAnzeige = document.getElementById("gesamtpreis");
+            const versandkosten = parseFloat(document.getElementById("versandkosten").textContent) || 0;
 
             function aktualisiereZusammenfassung() {
                 const gerichtElements = gerichteContainer.getElementsByClassName("gericht");
                 gerichtListe.innerHTML = "";
-                let gesamtpreis = 0;
+                let zwischensumme = 0;
 
                 for (let div of gerichtElements) {
-                  const name = div.querySelector("input[name='gericht']").value;
-                  const preis = parseFloat(div.querySelector("input[name='preis']").value);
-                  const schaerfe = div.querySelector("select[name='schaerfegrad']").value;
-                  const notiz = div.querySelector("input[name='notiz']").value;
+                    const name = div.querySelector("input[name='gericht']").value;
+                    const preis = parseFloat(div.querySelector("input[name='preis']").value);
+                    const schaerfe = div.querySelector("select[name='schaerfegrad']").value;
+                    const notiz = div.querySelector("input[name='notiz']").value;
 
-                  if (name && !isNaN(preis)) {
-                      const eintrag = document.createElement("div");
-                      eintrag.classList.add("gericht-eintrag");
-                      eintrag.textContent = `${name} (${schaerfe}${notiz ? " – " + notiz : ""}) – ${preis.toFixed(2)} €`;
-                      gerichtListe.appendChild(eintrag);
-                      gesamtpreis += preis;
-                  }
-               }
+                    if (name && !isNaN(preis)) {
+                        const eintrag = document.createElement("div");
+                        eintrag.classList.add("gericht-eintrag");
+                        eintrag.textContent = `${name} (${schaerfe}${notiz ? " – " + notiz : ""}) – ${preis.toFixed(2)} €`;
+                        gerichtListe.appendChild(eintrag);
+                        zwischensumme += preis;
+                    }
+                }
 
-
-                gesamtpreisAnzeige.textContent = gesamtpreis.toFixed(2);
+                zwischensummeAnzeige.textContent = zwischensumme.toFixed(2);
+                const gesamt = zwischensumme + versandkosten;
+                gesamtpreisAnzeige.textContent = gesamt.toFixed(2);
             }
 
             document.getElementById("gericht-hinzufuegen").addEventListener("click", function () {
@@ -87,7 +114,6 @@
                     <input type="text" name="notiz" placeholder="Notiz (optional)">
                     <button type="button" class="entfernen">Entfernen</button>
                 `;
-
 
                 gerichtDiv.querySelectorAll("input, select").forEach(el => {
                     el.addEventListener("input", aktualisiereZusammenfassung);
@@ -111,21 +137,21 @@
                 const gerichte = [];
 
                 for (let div of gerichtElements) {
-                  const nr = div.querySelector("input[name='nr']").value;
-                  const gerichtName = div.querySelector("input[name='gericht']").value;
-                  const preis = parseFloat(div.querySelector("input[name='preis']").value);
-                  const schaerfe = div.querySelector("select[name='schaerfegrad']").value;
-                  const notiz = div.querySelector("input[name='notiz']").value;
+                    const nr = div.querySelector("input[name='nr']").value;
+                    const gerichtName = div.querySelector("input[name='gericht']").value;
+                    const preis = parseFloat(div.querySelector("input[name='preis']").value);
+                    const schaerfe = div.querySelector("select[name='schaerfegrad']").value;
+                    const notiz = div.querySelector("input[name='notiz']").value;
 
-                  if (gerichtName && !isNaN(preis)) {
-                      gerichte.push({
-                          nr: nr,
-                          name: gerichtName,
-                          preis: preis,
-                          schaerfegrad: schaerfe,
-                          notiz: notiz
-                      });
-                  }
+                    if (gerichtName && !isNaN(preis)) {
+                        gerichte.push({
+                            nr: nr,
+                            name: gerichtName,
+                            preis: preis,
+                            schaerfegrad: schaerfe,
+                            notiz: notiz
+                        });
+                    }
                 }
 
                 fetch("/api/bestellung", {

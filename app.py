@@ -14,13 +14,15 @@ app = Flask(__name__)
 client = MongoClient(os.getenv("MONGODB_URI"))
 db = client["bestellapp"]
 bestellungen = db["bestellungen"]
+lieferanten = db["lieferanten"]
 app.secret_key = os.getenv("SECRET_KEY", "dev_default_key")
 
 
 # Standard Website (Frontend)
 @app.route("/")
 def bestellseite():
-    return render_template("bestellung.html")
+    lieferant = lieferanten.find_one({"aktiv": True})
+    return render_template("bestellung.html", lieferant=lieferant)
 
 # Benutzer Seite
 @app.route("/api/bestellung", methods=["POST"])
@@ -31,13 +33,15 @@ def bestellung_absenden():
 
     name = data.get("name")
     gerichte = data.get("gerichte", [])
+    lieferant = lieferanten.find_one({"aktiv": True})
 
     if not name or not gerichte:
         return jsonify({"status": "error", "reason": "missing name or gerichte"}), 400
 
     bestellung = {
         "name": name,
-        "gerichte": gerichte
+        "gerichte": gerichte,
+        "lieferant_id": lieferant["_id"] if lieferant else None
     }
 
     result = bestellungen.insert_one(bestellung)
@@ -51,7 +55,7 @@ def admin_login():
         benutzer = request.form.get("username")
         passwort = request.form.get("password")
 
-        # Temporärer Login, später aus DB/Einstellungsdatei
+        # Temporärer Login, später in DB
         if benutzer == "admin" and passwort == "geheim":
             session["logged_in"] = True
             return redirect(url_for("admin_login"))
@@ -60,13 +64,11 @@ def admin_login():
 
     return render_template("admin.html", fehler=fehler)
 
-# Admin Logout
 @app.route("/admin/logout")
 def admin_logout():
     session.clear()
     return redirect(url_for("admin_login"))
 
-# Admin Bestellungen
 @app.route("/admin/bestellungen")
 def admin_bestellungen():
     if not session.get("logged_in"):
@@ -77,6 +79,15 @@ def admin_bestellungen():
 
     for b in bestellungen_liste:
         summe = sum(g.get("preis", 0) for g in b.get("gerichte", []))
+
+        lieferant = None
+        if "lieferant_id" in b:
+            lieferant = lieferanten.find_one({"_id": b["lieferant_id"]})
+            if lieferant:
+                summe += lieferant.get("versand_pro_person", 0)
+                b["versand"] = lieferant.get("versand_pro_person", 0)
+                b["lieferant_name"] = lieferant.get("name")
+
         b["summe"] = round(summe, 2)
 
         zahlung = b.get("zahlung", {})
@@ -92,7 +103,6 @@ def admin_bestellungen():
                            bestellungen=bestellungen_liste,
                            gesamtpreis=round(gesamtpreis, 2))
 
-# Admin Bestellung Löschen
 @app.route("/admin/bestellung/loeschen/<bestell_id>", methods=["POST"])
 def bestellung_loeschen(bestell_id):
     if not session.get("logged_in"):
@@ -101,7 +111,6 @@ def bestellung_loeschen(bestell_id):
     bestellungen.delete_one({"_id": ObjectId(bestell_id)})
     return redirect(url_for("admin_bestellungen"))
 
-# Admin alle Bestellungen Löschen
 @app.route("/admin/bestellungen/alle-loeschen", methods=["POST"])
 def bestellungen_loeschen_alle():
     if not session.get("logged_in"):
@@ -110,7 +119,6 @@ def bestellungen_loeschen_alle():
     bestellungen.delete_many({})
     return redirect(url_for("admin_bestellungen"))
 
-# Admin Bestellung edit
 @app.route("/admin/bestellung/bearbeiten/<bestell_id>", methods=["GET", "POST"])
 def bestellung_bearbeiten(bestell_id):
     if not session.get("logged_in"):
@@ -147,7 +155,6 @@ def bestellung_bearbeiten(bestell_id):
 
     return render_template("admin_bearbeiten.html", bestellung=bestellung)
 
-# Admin ist bezahlt?
 @app.route("/admin/bestellung/zahlung/<bestell_id>", methods=["POST"])
 def bestellung_zahlung_speichern(bestell_id):
     if not session.get("logged_in"):
@@ -171,8 +178,75 @@ def bestellung_zahlung_speichern(bestell_id):
     )
 
     return redirect(url_for("admin_bestellungen"))
-    #return "", 204  # Erfolgreich, kein Content
 
+@app.route("/admin/lieferanten", methods=["GET", "POST"])
+def admin_lieferanten():
+    if not session.get("logged_in"):
+        return redirect(url_for("admin_login"))
+
+    if request.method == "POST":
+        name = request.form.get("name")
+        versand = float(request.form.get("versand", 0))
+        menu_typ = request.form.get("menu_typ")
+        menu_info = request.form.get("menu_info")
+
+        lieferanten.insert_one({
+            "name": name,
+            "versand_pro_person": versand,
+            "menu_typ": menu_typ,
+            "menu_info": menu_info,
+            "aktiv": False
+        })
+
+        return redirect(url_for("admin_lieferanten"))
+
+    lieferanten_liste = list(lieferanten.find())
+    return render_template("admin_lieferanten.html", lieferanten=lieferanten_liste)
+
+@app.route("/admin/lieferant/aktivieren/<lieferant_id>", methods=["POST"])
+def lieferant_aktivieren(lieferant_id):
+    if not session.get("logged_in"):
+        return redirect(url_for("admin_login"))
+
+    lieferanten.update_many({}, {"$set": {"aktiv": False}})
+    lieferanten.update_one({"_id": ObjectId(lieferant_id)}, {"$set": {"aktiv": True}})
+    return redirect(url_for("admin_lieferanten"))
+
+@app.route("/admin/lieferant/loeschen/<lieferant_id>", methods=["POST"])
+def lieferant_loeschen(lieferant_id):
+    if not session.get("logged_in"):
+        return redirect(url_for("admin_login"))
+
+    lieferanten.delete_one({"_id": ObjectId(lieferant_id)})
+    return redirect(url_for("admin_lieferanten"))
+
+@app.route("/admin/lieferant/bearbeiten/<lieferant_id>", methods=["GET", "POST"])
+def lieferant_bearbeiten(lieferant_id):
+    if not session.get("logged_in"):
+        return redirect(url_for("admin_login"))
+
+    lieferant = lieferanten.find_one({"_id": ObjectId(lieferant_id)})
+    if not lieferant:
+        return "Lieferant nicht gefunden", 404
+
+    if request.method == "POST":
+        name = request.form.get("name")
+        versand = float(request.form.get("versand", 0))
+        menu_typ = request.form.get("menu_typ")
+        menu_info = request.form.get("menu_info")
+
+        lieferanten.update_one(
+            {"_id": ObjectId(lieferant_id)},
+            {"$set": {
+                "name": name,
+                "versand_pro_person": versand,
+                "menu_typ": menu_typ,
+                "menu_info": menu_info
+            }}
+        )
+        return redirect(url_for("admin_lieferanten"))
+
+    return render_template("admin_lieferant_bearbeiten.html", lieferant=lieferant)
 
 # App starten
 if __name__ == "__main__":
