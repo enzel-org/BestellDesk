@@ -19,7 +19,7 @@
                 <input type="text" name="gericht_{{ loop.index0 }}_name" placeholder="Name" value="{{ gericht.name }}">
                 <input type="number" step="0.01" name="gericht_{{ loop.index0 }}_preis" placeholder="Preis" value="{{ gericht.preis }}">
                 <select name="gericht_{{ loop.index0 }}_schaerfegrad">
-                    {% for s in ["Keine", "Mild", "Mittel", "Scharf", "Extra"] %}
+                    {% for s in ["Keine", "Mild", "Mittel", "Scharf", "Extra Scharf"] %}
                         <option value="{{ s }}" {% if gericht.schaerfegrad == s %}selected{% endif %}>{{ s }}</option>
                     {% endfor %}
                 </select>

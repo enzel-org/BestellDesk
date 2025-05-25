@@ -17,6 +17,7 @@ db = client["bestellapp"]
 bestellungen = db["bestellungen"]
 lieferanten = db["lieferanten"]
 einstellungen = db["einstellungen"]
+lieferadressen = db["lieferadressen"]
 app.secret_key = os.getenv("SECRET_KEY", "dev_default_key")
 
 # Startseite
@@ -43,7 +44,6 @@ def bestellseite():
             bestellbar = True  # Falls Eingabe ungültig ist
 
     return render_template("bestellung.html", lieferant=lieferant, bestellbar=bestellbar, hinweis=hinweis)
-
 
 # Bestellung absenden (API)
 @app.route("/api/bestellung", methods=["POST"])
@@ -307,7 +307,6 @@ def admin_zeitfenster():
 
     return render_template("admin_zeitfenster.html", einstellung=einstellung)
 
-
 # Admin Bestellvorschau
 @app.route("/admin/bestellvorschau", methods=["GET", "POST"])
 def admin_bestellvorschau():
@@ -331,22 +330,84 @@ def admin_bestellvorschau():
     for (nr, name, schaerfegrad, notiz), count in gericht_counter.items():
         zeile = f"{count}x Nr.{nr} {name}"
         if schaerfegrad and schaerfegrad.lower() != "keine":
-            zeile += f" ({schaerfegrad})"
+            zeile += f" – Schärfe: {schaerfegrad}"
         if notiz:
             zeile += f" – {notiz}"
         zusammenfassung.append(zeile)
 
     vorschau_text = "\n".join(zusammenfassung)
 
-    firmen_liste = list(einstellungen.find({"typ": "firma"}))
-    zeitfenster = einstellungen.find_one({"typ": "zeitfenster"})
-    zustaendig_name = zeitfenster.get("name", "") if zeitfenster else ""
+    # Zuständiger Name aus den Einstellungen (Zeitfenster)
+    einstellung = einstellungen.find_one({"typ": "zeitfenster"})
+    zustaendig_name = einstellung["name"] if einstellung else "..."
 
-    return render_template("admin_bestellvorschau.html",
+    # Lieferadressen abrufen
+    lieferadressen_liste = list(lieferadressen.find())
+
+    # WhatsApp-Nummer des aktiven Lieferanten abrufen
+    einstellungen_dokument = einstellungen.find_one({"typ": "whatsapp"})
+    whatsapp_nummer = einstellungen_dokument.get("nummer", "") if einstellungen_dokument else ""
+
+    return render_template(
+        "admin_bestellvorschau.html",
         vorschau=vorschau_text,
-        firmen=firmen_liste,
-        zustaendig=zustaendig_name
+        firmen=lieferadressen_liste,
+        lieferadressen=lieferadressen_liste,
+        zustaendig=zustaendig_name,
+        whatsapp_nummer=whatsapp_nummer
     )
+
+# Admin Lieferadressen
+@app.route("/admin/lieferadressen", methods=["GET", "POST"])
+def admin_lieferadressen():
+    if not session.get("logged_in"):
+        return redirect(url_for("admin_login"))
+
+    if request.method == "POST":
+        name = request.form.get("name")
+        adresse = request.form.get("adresse")
+
+        if name and adresse:
+            lieferadressen.insert_one({
+                "name": name,
+                "adresse": adresse
+            })
+            return redirect(url_for("admin_lieferadressen"))
+
+    eintraege = list(lieferadressen.find())
+    return render_template("admin_lieferadressen.html", adressen=eintraege)
+
+# Admin Lieferadresse bearbeiten
+@app.route("/admin/lieferadresse/bearbeiten/<id>", methods=["GET", "POST"])
+def admin_lieferadresse_bearbeiten(id):
+    if not session.get("logged_in"):
+        return redirect(url_for("admin_login"))
+
+    eintrag = lieferadressen.find_one({"_id": ObjectId(id)})
+    if not eintrag:
+        return "Nicht gefunden", 404
+
+    if request.method == "POST":
+        name = request.form.get("name")
+        adresse = request.form.get("adresse")
+
+        lieferadressen.update_one(
+            {"_id": ObjectId(id)},
+            {"$set": {"name": name, "adresse": adresse}}
+        )
+        return redirect(url_for("admin_lieferadressen"))
+
+    return render_template("admin_lieferadresse_bearbeiten.html", eintrag=eintrag)
+
+# Admin Lieferadresse löschen
+@app.route("/admin/lieferadresse/loeschen/<id>", methods=["POST"])
+def admin_lieferadresse_loeschen(id):
+    if not session.get("logged_in"):
+        return redirect(url_for("admin_login"))
+
+    lieferadressen.delete_one({"_id": ObjectId(id)})
+    return redirect(url_for("admin_lieferadressen"))
+
 
 # App starten
 if __name__ == "__main__":
