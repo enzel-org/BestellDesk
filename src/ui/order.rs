@@ -1,17 +1,17 @@
 use eframe::egui;
 use mongodb::bson::oid::ObjectId;
 
-use crate::services::{dishes, orders, settings, suppliers};
 use crate::model::Dish;
+use crate::services::{dishes, orders, settings, suppliers};
 
-/// One selected dish row in the UI.
 #[derive(Clone)]
-struct ItemSel {
-    dish_idx: usize,
-    qty: i32,
+pub(crate) struct ItemSel {
+    pub(crate) dish_idx: usize,
+    pub(crate) qty: i32,
+    pub(crate) size_idx: Option<usize>, // only for Pizza
+    pub(crate) note: String,            // optional
 }
 
-/// Local UI state for the order screen.
 #[derive(Default)]
 pub struct OrderState {
     pub supplier_name: String,
@@ -19,20 +19,14 @@ pub struct OrderState {
     pub supplier_id: Option<ObjectId>,
     pub dishes: Vec<Dish>,
 
-    // Multiple dish selections
-    pub selections: Vec<ItemSel>,
-
-    // Who is this order for
+    pub(crate) selections: Vec<ItemSel>,
     pub customer_name: String,
-
-    // Injected from main.rs
     pub client_id: String,
 
     pub load_err: Option<String>,
     pub loaded: bool,
 }
 
-/// Format cents to "€X.YY".
 fn eur(cents: i64) -> String {
     let sign = if cents < 0 { "-" } else { "" };
     let abs = cents.abs();
@@ -45,11 +39,12 @@ pub fn render(
     db: &crate::db::Db,
     state: &mut OrderState,
 ) {
-    // Lazy-load supplier + dishes once
+    // Lazy-load once
     if !state.loaded && state.load_err.is_none() {
         let res = rt.block_on(async {
             if let Some(sid) = settings::get_active_supplier_id(db).await? {
-                if let Some(supp) = suppliers::get_supplier(db, sid).await? {
+                if let Some(supp) = suppliers::get(db, sid).await? {
+                    // ^^^^^^^^^^^^^ fix: suppliers::get(...) statt get_supplier(...)
                     let ds = dishes::list_by_supplier(db, sid).await?;
                     Ok::<_, anyhow::Error>((Some(sid), supp.name, supp.delivery_fee_cents, ds))
                 } else {
@@ -66,7 +61,9 @@ pub fn render(
                 state.delivery_fee_cents = fee;
                 state.dishes = ds;
                 if state.selections.is_empty() {
-                    state.selections.push(ItemSel { dish_idx: 0, qty: 1 });
+                    state
+                        .selections
+                        .push(ItemSel { dish_idx: 0, qty: 1, size_idx: None, note: String::new() });
                 }
                 state.loaded = true;
             }
@@ -75,7 +72,6 @@ pub fn render(
     }
 
     ui.heading("Place your order");
-
     if let Some(err) = &state.load_err {
         ui.colored_label(egui::Color32::RED, err);
         ui.label("Admin must set an active supplier and menu.");
@@ -101,57 +97,98 @@ pub fn render(
     ui.horizontal(|ui| {
         if ui.button("+ Add dish").clicked() {
             let last_idx = state.selections.last().map(|s| s.dish_idx).unwrap_or(0);
-            state.selections.push(ItemSel { dish_idx: last_idx, qty: 1 });
+            state
+                .selections
+                .push(ItemSel { dish_idx: last_idx, qty: 1, size_idx: None, note: String::new() });
         }
-        if ui.button("− Remove last").clicked() {
-            if state.selections.len() > 1 {
-                state.selections.pop();
-            }
+        if ui.button("− Remove last").clicked() && state.selections.len() > 1 {
+            state.selections.pop();
         }
     });
 
     ui.separator();
     ui.label("Dishes");
 
-    // Render each selection row
     for (i, sel) in state.selections.iter_mut().enumerate() {
         ui.group(|ui| {
             ui.horizontal(|ui| {
-                // Dish selector
                 let current = &state.dishes[sel.dish_idx];
+                let show_name = if current.tags.iter().any(|t| t == "Pizza") {
+                    let nr = current.number.clone().unwrap_or_default();
+                    format!("{} {}", nr, current.name)
+                } else {
+                    current.name.clone()
+                };
                 egui::ComboBox::from_label(format!("Dish #{}", i + 1))
-                    .selected_text(format!("{} ({})", current.name, eur(current.price_cents)))
+                    .selected_text(show_name)
                     .show_ui(ui, |cb| {
                         for (idx, d) in state.dishes.iter().enumerate() {
-                            cb.selectable_value(
-                                &mut sel.dish_idx,
-                                idx,
-                                format!("{} ({})", d.name, eur(d.price_cents)),
-                            );
+                            let label = if d.tags.iter().any(|t| t == "Pizza") {
+                                let nr = d.number.clone().unwrap_or_default();
+                                format!("{} {}", nr, d.name)
+                            } else {
+                                d.name.clone()
+                            };
+                            cb.selectable_value(&mut sel.dish_idx, idx, label);
                         }
                     });
 
-                // Quantity control
+                let d = &state.dishes[sel.dish_idx];
+                if let Some(sizes) = &d.pizza_sizes {
+                    if sel.size_idx.is_none() && !sizes.is_empty() {
+                        sel.size_idx = Some(0);
+                    }
+                    let curr_idx = sel.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
+                    let curr = &sizes[curr_idx];
+                    egui::ComboBox::from_label("Size")
+                        .selected_text(format!("{} ({})", curr.label, eur(curr.price_cents)))
+                        .show_ui(ui, |cb| {
+                            for (sidx, s) in sizes.iter().enumerate() {
+                                cb.selectable_value(
+                                    &mut sel.size_idx,
+                                    Some(sidx),
+                                    format!("{} ({})", s.label, eur(s.price_cents)),
+                                );
+                            }
+                        });
+                } else {
+                    ui.monospace(format!("Unit: {}", eur(d.price_cents)));
+                }
+
                 ui.add(egui::DragValue::new(&mut sel.qty).range(1..=20).prefix("Qty: "));
             });
 
-            // Line total
+            ui.horizontal(|ui| {
+                ui.label("Note (optional)");
+                ui.text_edit_singleline(&mut sel.note);
+            });
+
             let d = &state.dishes[sel.dish_idx];
-            let line_total = (d.price_cents as i64) * (sel.qty as i64);
+            let unit = if let Some(sizes) = &d.pizza_sizes {
+                let idx = sel.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
+                sizes[idx].price_cents
+            } else {
+                d.price_cents
+            } as i64;
+            let line_total = unit * (sel.qty as i64);
             ui.monospace(format!("Line total: {}", eur(line_total)));
         });
     }
 
-    // Summary
     let items_total: i64 = state
         .selections
         .iter()
         .map(|s| {
             let d = &state.dishes[s.dish_idx];
-            (d.price_cents as i64) * (s.qty as i64)
+            let unit = if let Some(sizes) = &d.pizza_sizes {
+                let idx = s.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
+                sizes[idx].price_cents
+            } else {
+                d.price_cents
+            } as i64;
+            unit * (s.qty as i64)
         })
         .sum();
-
     let grand_total = items_total + state.delivery_fee_cents;
 
     ui.separator();
@@ -166,30 +203,65 @@ pub fn render(
 
     if ui.add_enabled(can_submit, egui::Button::new("Submit order")).clicked() {
         if let Some(supplier_id) = state.supplier_id {
-            // Build items payload
-            let items: Vec<(ObjectId, String, i32, i64)> = state
-                .selections
-                .iter()
-                .map(|s| {
-                    let d = &state.dishes[s.dish_idx];
-                    (d.id.unwrap(), d.name.clone(), s.qty, d.price_cents as i64)
-                })
-                .collect();
+            let items: Vec<(ObjectId, String, i32, i64, Option<String>, Option<String>)> =
+                state
+                    .selections
+                    .iter()
+                    .map(|s| {
+                        let d = &state.dishes[s.dish_idx];
+                        if let Some(sizes) = &d.pizza_sizes {
+                            let idx =
+                                s.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
+                            let sz = &sizes[idx];
+                            let nr = d.number.clone().unwrap_or_default();
+                            let name = format!("{} {} ({})", nr, d.name, sz.label);
+                            (
+                                d.id.unwrap(),
+                                name,
+                                s.qty,
+                                sz.price_cents as i64,
+                                if s.note.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(s.note.clone())
+                                },
+                                Some(sz.label.clone()),
+                            )
+                        } else {
+                            (
+                                d.id.unwrap(),
+                                d.name.clone(),
+                                s.qty,
+                                d.price_cents as i64,
+                                if s.note.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(s.note.clone())
+                                },
+                                None,
+                            )
+                        }
+                    })
+                    .collect();
 
-            let res = rt.block_on(orders::create(
+            let res = rt.block_on(orders::create_with_notes(
                 db,
                 &state.customer_name,
                 supplier_id,
                 items,
                 state.delivery_fee_cents,
-                &state.client_id, // include client_id in DB order
+                &state.client_id,
             ));
 
             match res {
                 Ok(_) => {
-                    // Reset selections (keep name)
                     state.selections.clear();
-                    state.selections.push(ItemSel { dish_idx: 0, qty: 1 });
+                    state.selections.push(ItemSel {
+                        dish_idx: 0,
+                        qty: 1,
+                        size_idx: None,
+                        note: String::new(),
+                    });
                 }
                 Err(e) => {
                     ui.colored_label(egui::Color32::RED, format!("Failed to submit: {e}"));

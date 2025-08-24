@@ -1,15 +1,18 @@
 use anyhow::Result;
+use mongodb::bson::{doc, oid::ObjectId};
+use mongodb::Collection;
 use futures_util::TryStreamExt;
-use mongodb::{
-    bson::{doc, oid::ObjectId},
-    Collection,
-};
 
-use crate::{db::Db, model::Supplier};
+use crate::db::Db;
+use crate::model::Supplier;
+
+fn coll(db: &Db) -> Collection<Supplier> {
+    db.collection::<Supplier>("suppliers")
+}
 
 pub async fn list(db: &Db) -> Result<Vec<Supplier>> {
-    let coll: Collection<Supplier> = db.db.collection("suppliers");
-    let mut cur = coll.find(doc! {}).await?;
+    let c = coll(db);
+    let mut cur = c.find(doc! {}).await?;
     let mut out = Vec::new();
     while let Some(s) = cur.try_next().await? {
         out.push(s);
@@ -17,20 +20,17 @@ pub async fn list(db: &Db) -> Result<Vec<Supplier>> {
     Ok(out)
 }
 
-pub async fn get_supplier(db: &Db, id: ObjectId) -> Result<Option<Supplier>> {
-    let coll: Collection<Supplier> = db.db.collection("suppliers");
-    Ok(coll.find_one(doc! { "_id": id }).await?)
+pub async fn get(db: &Db, id: ObjectId) -> Result<Option<Supplier>> {
+    Ok(coll(db).find_one(doc! { "_id": id }).await?)
 }
 
 pub async fn create(db: &Db, name: &str, fee_cents: i64) -> Result<ObjectId> {
-    let coll: Collection<Supplier> = db.db.collection("suppliers");
     let ins = Supplier {
         id: None,
-        name: name.into(),
+        name: name.to_string(),
         delivery_fee_cents: fee_cents,
-        is_active: false, // DB braucht Feld, aber UI zeigt es nicht
     };
-    let r = coll.insert_one(ins).await?;
+    let r = coll(db).insert_one(ins).await?;
     Ok(r.inserted_id.as_object_id().unwrap())
 }
 
@@ -40,20 +40,14 @@ pub async fn update(
     name: &str,
     fee_cents: i64,
 ) -> Result<()> {
-    let coll: Collection<Supplier> = db.db.collection("suppliers");
-    coll.update_one(
+    coll(db).update_one(
         doc! { "_id": id },
-        doc! { "$set": {
-            "name": name,
-            "delivery_fee_cents": fee_cents
-        }},
-    )
-    .await?;
+        doc! { "$set": { "name": name, "delivery_fee_cents": fee_cents } }
+    ).await?;
     Ok(())
 }
 
 pub async fn delete(db: &Db, id: ObjectId) -> Result<()> {
-    let coll: Collection<Supplier> = db.db.collection("suppliers");
-    coll.delete_one(doc! { "_id": id }).await?;
+    coll(db).delete_one(doc! { "_id": id }).await?;
     Ok(())
 }
