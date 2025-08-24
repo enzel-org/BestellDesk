@@ -1,38 +1,32 @@
 use eframe::egui;
 use mongodb::bson::oid::ObjectId;
 
-use crate::model::{Dish, DishInput, PizzaSize, Supplier};
-use crate::services::{admin_users, dishes, settings, suppliers};
+use crate::model::{Dish, DishInput, PizzaSize, Supplier, Category};
+use crate::services::{admin_users, dishes, settings, suppliers, categories};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AdminPage { Menu, Suppliers, Dishes, Settings }
+enum AdminPage { Menu, Suppliers, Dishes, Categories, Settings }
 
 pub struct AdminState {
     page: AdminPage,
 
-    // Suppliers (Create)
+    // Suppliers (create/edit)
     supplier_name: String,
     supplier_fee: i64,
-
-    // Suppliers (Edit)
     edit_supplier_id: Option<ObjectId>,
     edit_supplier_name: String,
     edit_supplier_fee: i64,
 
-    // Dishes (Create)
+    // Dishes (create/edit)
     dish_name: String,
     dish_price: i64,
     pub sel_supplier_idx: usize,
     tag_is_pizza: bool,
     dish_number: String,
-
-    // Pizza Create
-    pizza_number: String,
     pizza_sizes: Vec<PizzaSize>,
     new_size_label: String,
     new_size_price: i64,
 
-    // Dishes (Edit)
     edit_id: Option<ObjectId>,
     edit_is_pizza: bool,
     edit_name: String,
@@ -42,6 +36,16 @@ pub struct AdminState {
     edit_new_size_label: String,
     edit_new_size_price: i64,
 
+    // Category selection for create/edit dish
+    available_categories: Vec<Category>,
+    chosen_categories_create: Vec<ObjectId>,
+    chosen_categories_edit: Vec<ObjectId>,
+
+    // Categories page
+    cat_new_name: String,
+    cat_rename_id: Option<ObjectId>,
+    cat_rename_text: String,
+
     // Settings
     pub set_supplier_idx: usize,
 }
@@ -50,20 +54,22 @@ impl Default for AdminState {
     fn default() -> Self {
         Self {
             page: AdminPage::Menu,
+
             supplier_name: String::new(),
             supplier_fee: 0,
             edit_supplier_id: None,
             edit_supplier_name: String::new(),
             edit_supplier_fee: 0,
+
             dish_name: String::new(),
             dish_price: 0,
             sel_supplier_idx: 0,
             tag_is_pizza: false,
             dish_number: String::new(),
-            pizza_number: String::new(),
             pizza_sizes: vec![],
             new_size_label: String::new(),
             new_size_price: 0,
+
             edit_id: None,
             edit_is_pizza: false,
             edit_name: String::new(),
@@ -72,6 +78,15 @@ impl Default for AdminState {
             edit_sizes: vec![],
             edit_new_size_label: String::new(),
             edit_new_size_price: 0,
+
+            available_categories: vec![],
+            chosen_categories_create: vec![],
+            chosen_categories_edit: vec![],
+
+            cat_new_name: String::new(),
+            cat_rename_id: None,
+            cat_rename_text: String::new(),
+
             set_supplier_idx: 0,
         }
     }
@@ -83,6 +98,7 @@ fn eur(cents: i64) -> String {
     format!("{sign}€{}.{}", abs / 100, format!("{:02}", abs % 100))
 }
 
+/// Render Admin root
 pub fn render(
     ui: &mut egui::Ui,
     rt: &tokio::runtime::Runtime,
@@ -92,7 +108,7 @@ pub fn render(
     authed: &mut bool,
     state: &mut AdminState,
 ) {
-    // Bootstrap
+    // Bootstrap admin
     let need_bootstrap = rt.block_on(admin_users::count(db)).unwrap_or(0) == 0;
     if need_bootstrap {
         ui.heading("Create first admin user");
@@ -126,17 +142,20 @@ pub fn render(
 
     // Nav
     ui.horizontal(|ui| {
-        if ui.button("Menu").clicked()      { state.page = AdminPage::Menu; }
-        if ui.button("Suppliers").clicked() { state.page = AdminPage::Suppliers; }
-        if ui.button("Dishes").clicked()    { state.page = AdminPage::Dishes; }
-        if ui.button("Settings").clicked()  { state.page = AdminPage::Settings; }
+        if ui.button("Menu").clicked()       { state.page = AdminPage::Menu; }
+        if ui.button("Suppliers").clicked()  { state.page = AdminPage::Suppliers; }
+        if ui.button("Dishes").clicked()     { state.page = AdminPage::Dishes; }
+        if ui.button("Categories").clicked() { state.page = AdminPage::Categories; }
+        if ui.button("Settings").clicked()   { state.page = AdminPage::Settings; }
     });
     ui.separator();
 
+    // Route
     match state.page {
         AdminPage::Menu => { ui.heading("Admin"); ui.label("Choose a section above."); }
         AdminPage::Suppliers => page_suppliers(ui, rt, db, state),
         AdminPage::Dishes => page_dishes(ui, rt, db, state),
+        AdminPage::Categories => page_categories(ui, rt, db, state),
         AdminPage::Settings => page_settings(ui, rt, db, state),
     }
 }
@@ -156,9 +175,17 @@ fn page_suppliers(
     ui.label("Create supplier");
     ui.horizontal(|ui| {
         ui.text_edit_singleline(&mut state.supplier_name);
-        ui.add(egui::DragValue::new(&mut state.supplier_fee).range(0..=10_000).prefix("Delivery fee (cents): "));
+        ui.add(
+            egui::DragValue::new(&mut state.supplier_fee)
+                .range(0..=10_000)
+                .prefix("Delivery fee (cents): "),
+        );
         if ui.button("Create").clicked() && !state.supplier_name.trim().is_empty() {
-            let _ = rt.block_on(suppliers::create(db, &state.supplier_name, state.supplier_fee));
+            let _ = rt.block_on(suppliers::create(
+                db,
+                &state.supplier_name,
+                state.supplier_fee,
+            ));
             state.supplier_name.clear();
         }
     });
@@ -191,12 +218,20 @@ fn page_suppliers(
             ui.label("Name");
             ui.text_edit_singleline(&mut state.edit_supplier_name);
             ui.label("Delivery fee (cents)");
-            ui.add(egui::DragValue::new(&mut state.edit_supplier_fee).range(0..=10_000));
+            ui.add(
+                egui::DragValue::new(&mut state.edit_supplier_fee)
+                    .range(0..=10_000),
+            );
         });
 
         ui.horizontal(|ui| {
             if ui.button("Save").clicked() {
-                let _ = rt.block_on(suppliers::update(db, eid, &state.edit_supplier_name, state.edit_supplier_fee));
+                let _ = rt.block_on(suppliers::update(
+                    db,
+                    eid,
+                    &state.edit_supplier_name,
+                    state.edit_supplier_fee,
+                ));
                 state.edit_supplier_id = None;
                 state.edit_supplier_name.clear();
                 state.edit_supplier_fee = 0;
@@ -225,9 +260,9 @@ fn parse_nr_key(nr_opt: &Option<String>) -> i64 {
 fn row_label(d: &Dish) -> String {
     if d.tags.iter().any(|t| t == "Pizza") {
         let nr = d.number.clone().unwrap_or_default();
-        let sizes = d.pizza_sizes.as_ref()
-            .map(|v| v.iter().map(|p| format!("{} {}", p.label, eur(p.price_cents))).collect::<Vec<_>>().join(", "))
-            .unwrap_or_default();
+        let sizes = d.pizza_sizes.as_ref().map(|v| {
+            v.iter().map(|p| format!("{} {}", p.label, eur(p.price_cents))).collect::<Vec<_>>().join(", ")
+        }).unwrap_or_default();
         if nr.is_empty() { format!("Pizza: {} [{}]", d.name, sizes) }
         else { format!("Pizza Nr. {}: {} [{}]", nr, d.name, sizes) }
     } else {
@@ -244,10 +279,13 @@ fn page_dishes(
     state: &mut AdminState,
 ) {
     ui.heading("Dishes");
-
     let sups = rt.block_on(suppliers::list(db)).unwrap_or_default();
     if sups.is_empty() { ui.label("No suppliers yet."); return; }
     if state.sel_supplier_idx >= sups.len() { state.sel_supplier_idx = 0; }
+    let sid = sups[state.sel_supplier_idx].id.unwrap();
+
+    // load categories for this supplier
+    state.available_categories = rt.block_on(categories::list_by_supplier(db, sid)).unwrap_or_default();
 
     egui::ComboBox::from_label("Supplier")
         .selected_text(sups[state.sel_supplier_idx].name.clone())
@@ -256,10 +294,24 @@ fn page_dishes(
                 cb.selectable_value(&mut state.sel_supplier_idx, i, s.name.clone());
             }
         });
-    let sid = sups[state.sel_supplier_idx].id.unwrap();
 
     ui.separator();
     ui.label("Create dish");
+
+    // Category checkboxes for create
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Categories:");
+        for c in &state.available_categories {
+            let mut checked = state.chosen_categories_create.contains(&c.id.unwrap());
+            if ui.checkbox(&mut checked, c.name.clone()).clicked() {
+                if checked {
+                    state.chosen_categories_create.push(c.id.unwrap());
+                } else {
+                    state.chosen_categories_create.retain(|x| *x != c.id.unwrap());
+                }
+            }
+        }
+    });
 
     // Create form
     ui.horizontal(|ui| {
@@ -275,11 +327,9 @@ fn page_dishes(
         }
     });
 
-    // Pizza-Create UI
     if state.tag_is_pizza {
         ui.separator();
         ui.label("Pizza sizes");
-
         let mut remove_idx: Option<usize> = None;
         for idx in 0..state.pizza_sizes.len() {
             ui.horizontal(|ui| {
@@ -300,17 +350,13 @@ fn page_dishes(
             ui.text_edit_singleline(&mut state.new_size_label);
             ui.add(egui::DragValue::new(&mut state.new_size_price).range(0..=100_000).prefix("Price (cents): "));
             if ui.button("Add size").clicked() && !state.new_size_label.trim().is_empty() {
-                state.pizza_sizes.push(PizzaSize {
-                    label: state.new_size_label.clone(),
-                    price_cents: state.new_size_price,
-                });
+                state.pizza_sizes.push(PizzaSize { label: state.new_size_label.clone(), price_cents: state.new_size_price });
                 state.new_size_label.clear();
                 state.new_size_price = 0;
             }
         });
     }
 
-    // Create click
     if ui.button("Create").clicked() {
         if state.tag_is_pizza {
             let input = DishInput {
@@ -320,6 +366,7 @@ fn page_dishes(
                 tags: vec!["Pizza".to_string()],
                 number: if state.dish_number.trim().is_empty() { None } else { Some(state.dish_number.trim().to_string()) },
                 pizza_sizes: if state.pizza_sizes.is_empty() { None } else { Some(state.pizza_sizes.clone()) },
+                categories: Some(state.chosen_categories_create.clone()),
             };
             if !input.name.is_empty() && input.pizza_sizes.is_some() {
                 let _ = rt.block_on(dishes::create_with_tags(db, input));
@@ -329,23 +376,21 @@ fn page_dishes(
                 state.new_size_label.clear();
                 state.new_size_price = 0;
                 state.tag_is_pizza = false;
+                state.chosen_categories_create.clear();
             }
         } else if !state.dish_name.trim().is_empty() {
-            let number_opt = if state.dish_number.trim().is_empty() {
-                None
-            } else {
-                Some(state.dish_number.trim().to_string())
-            };
             let _ = rt.block_on(dishes::create_plain(
                 db,
                 sid,
                 &state.dish_name,
-                number_opt,
+                if state.dish_number.trim().is_empty() { None } else { Some(state.dish_number.trim().to_string()) },
                 state.dish_price,
+                state.chosen_categories_create.clone(),
             ));
             state.dish_name.clear();
             state.dish_number.clear();
             state.dish_price = 0;
+            state.chosen_categories_create.clear();
         }
     }
 
@@ -353,13 +398,7 @@ fn page_dishes(
     ui.label("Existing dishes");
 
     let mut dlist = rt.block_on(dishes::list_by_supplier(db, sid)).unwrap_or_default();
-    dlist.sort_by_key(|d| {
-        if let Some(n) = &d.number {
-            let digits: String = n.chars().filter(|c| c.is_ascii_digit()).collect();
-            if let Ok(v) = digits.parse::<i64>() { return v; }
-        }
-        i64::MAX
-    });
+    dlist.sort_by_key(|d| parse_nr_key(&d.number));
 
     for d in dlist {
         ui.horizontal(|ui| {
@@ -371,6 +410,7 @@ fn page_dishes(
                     state.edit_is_pizza = is_pizza;
                     state.edit_name = d.name.clone();
                     state.edit_number = d.number.clone().unwrap_or_default();
+                    state.chosen_categories_edit = d.categories.clone();
                     if is_pizza {
                         state.edit_sizes = d.pizza_sizes.clone().unwrap_or_default();
                         state.edit_price = 0;
@@ -386,9 +426,25 @@ fn page_dishes(
         });
     }
 
+    // Edit form
     if let Some(eid) = state.edit_id {
         ui.separator();
         ui.heading("Edit dish");
+
+        // Category checkboxes for edit
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Categories:");
+            for c in &state.available_categories {
+                let mut checked = state.chosen_categories_edit.contains(&c.id.unwrap());
+                if ui.checkbox(&mut checked, c.name.clone()).clicked() {
+                    if checked {
+                        state.chosen_categories_edit.push(c.id.unwrap());
+                    } else {
+                        state.chosen_categories_edit.retain(|x| *x != c.id.unwrap());
+                    }
+                }
+            }
+        });
 
         ui.horizontal(|ui| {
             ui.label("Nr.");
@@ -403,12 +459,10 @@ fn page_dishes(
 
         if state.edit_is_pizza {
             ui.label("Pizza sizes");
-
             let mut remove_idx: Option<usize> = None;
             for idx in 0..state.edit_sizes.len() {
                 ui.horizontal(|ui| {
                     ui.label(format!("#{idx}"));
-
                     let l_ref: *mut String = &mut state.edit_sizes[idx].label;
                     let p_ref: *mut i64 = &mut state.edit_sizes[idx].price_cents;
                     unsafe {
@@ -426,10 +480,7 @@ fn page_dishes(
                 ui.text_edit_singleline(&mut state.edit_new_size_label);
                 ui.add(egui::DragValue::new(&mut state.edit_new_size_price).range(0..=100_000).prefix("Price (cents): "));
                 if ui.button("Add size").clicked() && !state.edit_new_size_label.trim().is_empty() {
-                    state.edit_sizes.push(PizzaSize {
-                        label: state.edit_new_size_label.clone(),
-                        price_cents: state.edit_new_size_price,
-                    });
+                    state.edit_sizes.push(PizzaSize { label: state.edit_new_size_label.clone(), price_cents: state.edit_new_size_price });
                     state.edit_new_size_label.clear();
                     state.edit_new_size_price = 0;
                 }
@@ -440,15 +491,21 @@ fn page_dishes(
             if ui.button("Save").clicked() {
                 if state.edit_is_pizza {
                     let _ = rt.block_on(dishes::update_pizza(
-                        db, eid, &state.edit_name,
+                        db,
+                        eid,
+                        &state.edit_name,
                         if state.edit_number.trim().is_empty() { None } else { Some(state.edit_number.trim().to_string()) },
                         state.edit_sizes.clone(),
+                        state.chosen_categories_edit.clone(),
                     ));
                 } else {
                     let _ = rt.block_on(dishes::update_plain(
-                        db, eid, &state.edit_name,
+                        db,
+                        eid,
+                        &state.edit_name,
                         if state.edit_number.trim().is_empty() { None } else { Some(state.edit_number.trim().to_string()) },
                         state.edit_price,
+                        state.chosen_categories_edit.clone(),
                     ));
                 }
                 state.edit_id = None;
@@ -456,6 +513,7 @@ fn page_dishes(
                 state.edit_number.clear();
                 state.edit_sizes.clear();
                 state.edit_price = 0;
+                state.chosen_categories_edit.clear();
             }
             if ui.button("Cancel").clicked() {
                 state.edit_id = None;
@@ -463,6 +521,76 @@ fn page_dishes(
                 state.edit_number.clear();
                 state.edit_sizes.clear();
                 state.edit_price = 0;
+                state.chosen_categories_edit.clear();
+            }
+        });
+    }
+}
+
+/* ---------------- Categories page ---------------- */
+
+fn page_categories(
+    ui: &mut egui::Ui,
+    rt: &tokio::runtime::Runtime,
+    db: &crate::db::Db,
+    state: &mut AdminState,
+) {
+    ui.heading("Categories");
+    let sups = rt.block_on(suppliers::list(db)).unwrap_or_default();
+    if sups.is_empty() { ui.label("No suppliers."); return; }
+    if state.sel_supplier_idx >= sups.len() { state.sel_supplier_idx = 0; }
+    let sid = sups[state.sel_supplier_idx].id.unwrap();
+
+    egui::ComboBox::from_label("Supplier")
+        .selected_text(sups[state.sel_supplier_idx].name.clone())
+        .show_ui(ui, |cb| {
+            for (i, s) in sups.iter().enumerate() {
+                cb.selectable_value(&mut state.sel_supplier_idx, i, s.name.clone());
+            }
+        });
+
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.text_edit_singleline(&mut state.cat_new_name);
+        if ui.button("Add category").clicked() && !state.cat_new_name.trim().is_empty() {
+            let _ = rt.block_on(categories::create(db, sid, &state.cat_new_name));
+            state.cat_new_name.clear();
+        }
+    });
+
+    let cats = rt.block_on(categories::list_by_supplier(db, sid)).unwrap_or_default();
+    for c in cats {
+        ui.horizontal(|ui| {
+            ui.label(format!("#{} {}", c.position, c.name));
+            if ui.button("↑").clicked() {
+                let _ = rt.block_on(categories::move_up(db, sid, c.id.unwrap()));
+            }
+            if ui.button("↓").clicked() {
+                let _ = rt.block_on(categories::move_down(db, sid, c.id.unwrap()));
+            }
+            if ui.button("Rename").clicked() {
+                state.cat_rename_id = c.id;
+                state.cat_rename_text = c.name.clone();
+            }
+            if ui.button("Delete").clicked() {
+                let _ = rt.block_on(categories::delete(db, c.id.unwrap()));
+            }
+        });
+    }
+
+    if let Some(cid) = state.cat_rename_id {
+        ui.separator();
+        ui.label("Rename category");
+        ui.text_edit_singleline(&mut state.cat_rename_text);
+        ui.horizontal(|ui| {
+            if ui.button("Save").clicked() {
+                let _ = rt.block_on(categories::rename(db, cid, &state.cat_rename_text));
+                state.cat_rename_id = None;
+                state.cat_rename_text.clear();
+            }
+            if ui.button("Cancel").clicked() {
+                state.cat_rename_id = None;
+                state.cat_rename_text.clear();
             }
         });
     }
@@ -477,7 +605,6 @@ fn page_settings(
     state: &mut AdminState,
 ) {
     ui.heading("Settings");
-
     let sups = rt.block_on(suppliers::list(db)).unwrap_or_default();
     if sups.is_empty() { ui.label("No suppliers yet. Create one first."); return; }
     if state.set_supplier_idx >= sups.len() { state.set_supplier_idx = 0; }
@@ -503,8 +630,5 @@ fn page_settings(
 }
 
 fn id_to_name(sups: &[Supplier], id: ObjectId) -> String {
-    sups.iter()
-        .find(|s| s.id == Some(id))
-        .map(|s| s.name.clone())
-        .unwrap_or_else(|| id.to_hex())
+    sups.iter().find(|s| s.id == Some(id)).map(|s| s.name.clone()).unwrap_or_else(|| id.to_hex())
 }

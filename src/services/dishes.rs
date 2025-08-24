@@ -11,8 +11,7 @@ fn coll(db: &Db) -> Collection<Dish> {
 }
 
 pub async fn list_by_supplier(db: &Db, supplier_id: ObjectId) -> Result<Vec<Dish>> {
-    let coll = db.collection::<Dish>("dishes");
-    let mut cur = coll.find(doc! { "supplier_id": supplier_id }).await?;
+    let mut cur = coll(db).find(doc! { "supplier_id": supplier_id }).await?;
     let mut out = Vec::new();
     while let Some(d) = cur.try_next().await? {
         out.push(d);
@@ -38,18 +37,19 @@ pub async fn create(
         tags: vec![],
         number: None,
         pizza_sizes: None,
+        categories: Vec::new(),
     };
     let r = coll(db).insert_one(d).await?;
     Ok(r.inserted_id.as_object_id().unwrap())
 }
 
-/// Plain (untagged) dish direkt **mit Nummer** anlegen.
 pub async fn create_plain(
     db: &Db,
     supplier_id: ObjectId,
     name: &str,
     number: Option<String>,
     price_cents: i64,
+    categories: Vec<ObjectId>,
 ) -> Result<ObjectId> {
     let d = Dish {
         id: None,
@@ -57,14 +57,14 @@ pub async fn create_plain(
         name: name.to_string(),
         price_cents,
         tags: vec![],
-        number,             // hier direkt setzen
-        pizza_sizes: None,  // untagged ⇒ keine Größen
+        number,
+        pizza_sizes: None,
+        categories,
     };
     let r = coll(db).insert_one(d).await?;
     Ok(r.inserted_id.as_object_id().unwrap())
 }
 
-/// Tags/Pizza-Variante
 pub async fn create_with_tags(db: &Db, input: DishInput) -> Result<ObjectId> {
     let d = Dish {
         id: None,
@@ -74,6 +74,7 @@ pub async fn create_with_tags(db: &Db, input: DishInput) -> Result<ObjectId> {
         tags: input.tags,
         number: input.number,
         pizza_sizes: input.pizza_sizes,
+        categories: input.categories.unwrap_or_default(),
     };
     let r = coll(db).insert_one(d).await?;
     Ok(r.inserted_id.as_object_id().unwrap())
@@ -84,13 +85,13 @@ pub async fn delete(db: &Db, id: ObjectId) -> Result<()> {
     Ok(())
 }
 
-/// Update für „plain“ Gerichte (ohne Pizza-Tag).
 pub async fn update_plain(
     db: &Db,
     id: ObjectId,
     name: &str,
     number: Option<String>,
     price_cents: i64,
+    categories: Vec<ObjectId>,
 ) -> Result<()> {
     coll(db)
         .update_one(
@@ -101,19 +102,20 @@ pub async fn update_plain(
                 "price_cents": price_cents,
                 "pizza_sizes": bson::Bson::Null,
                 "tags": [],
+                "categories": categories,
             }},
         )
         .await?;
     Ok(())
 }
 
-/// Update für Pizza-Gerichte (Größen + Preise je Größe).
 pub async fn update_pizza(
     db: &Db,
     id: ObjectId,
     name: &str,
     number: Option<String>,
     sizes: Vec<PizzaSize>,
+    categories: Vec<ObjectId>,
 ) -> Result<()> {
     coll(db)
         .update_one(
@@ -124,6 +126,7 @@ pub async fn update_pizza(
                 "pizza_sizes": bson::to_bson(&sizes)?,
                 "price_cents": 0,
                 "tags": ["Pizza"],
+                "categories": categories,
             }},
         )
         .await?;

@@ -28,7 +28,7 @@ pub struct AdminUser {
 /// Preisvariante für Pizzen
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PizzaSize {
-    pub label: String,     // z. B. "26cm", "32cm", "Familie"
+    pub label: String,
     pub price_cents: i64,
 }
 
@@ -36,25 +36,19 @@ pub struct PizzaSize {
 pub struct Dish {
     #[serde(rename = "_id", skip_serializing_if = "Option::is_none")]
     pub id: Option<ObjectId>,
-
     pub supplier_id: ObjectId,
     pub name: String,
-
-    /// Generischer Einzelpreis in Cent (für Nicht-Pizza)
     #[serde(default)]
     pub price_cents: i64,
-
-    /// Freie Tags; besondere UI-Logik bei Tag == "Pizza"
     #[serde(default)]
     pub tags: Vec<String>,
-
-    /// Nur bei Pizza: Menü-Nummer (z. B. "P12" oder "12")
     #[serde(default)]
     pub number: Option<String>,
-
-    /// Nur bei Pizza: Varianten mit Größe → Preis
     #[serde(default)]
     pub pizza_sizes: Option<Vec<PizzaSize>>,
+    /// References to categories this dish belongs to (many-to-many).
+    #[serde(default)]
+    pub categories: Vec<ObjectId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +59,7 @@ pub struct DishInput {
     pub tags: Vec<String>,
     pub number: Option<String>,
     pub pizza_sizes: Option<Vec<PizzaSize>>,
+    pub categories: Option<Vec<ObjectId>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,4 +94,14 @@ pub struct Order {
 
     pub status: String,
     pub created_at: mongodb::bson::DateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Category {
+    #[serde(rename = "_id", skip_serializing_if = "Option::is_none")]
+    pub id: Option<ObjectId>,
+    pub supplier_id: ObjectId,
+    pub name: String,
+    /// Sorting position (lower first)
+    pub position: i64,
 }
