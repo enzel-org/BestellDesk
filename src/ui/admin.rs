@@ -38,9 +38,10 @@ pub struct AdminState {
     chosen_categories_create: Vec<ObjectId>,
     chosen_categories_edit: Vec<ObjectId>,
 
-    cat_new_name: String,
-    cat_rename_id: Option<ObjectId>,
-    cat_rename_text: String,
+    pub cat_new_name: String,
+    pub cat_edit_id: Option<ObjectId>,
+    pub cat_edit_name: String,
+    pub cat_edit_pos: i64,
 
     pub set_supplier_idx: usize,
 }
@@ -79,8 +80,9 @@ impl Default for AdminState {
             chosen_categories_edit: vec![],
 
             cat_new_name: String::new(),
-            cat_rename_id: None,
-            cat_rename_text: String::new(),
+            cat_edit_id: None,
+            cat_edit_name: String::new(),
+            cat_edit_pos: 0,
 
             set_supplier_idx: 0,
         }
@@ -517,64 +519,99 @@ fn page_categories(
     db: &crate::db::Db,
     state: &mut AdminState,
 ) {
+    use crate::services::{categories, suppliers};
+
     ui.heading("Categories");
+
+    // 1) Supplier wählen
     let sups = rt.block_on(suppliers::list(db)).unwrap_or_default();
-    if sups.is_empty() { ui.label("No suppliers."); return; }
-    if state.sel_supplier_idx >= sups.len() { state.sel_supplier_idx = 0; }
-    let sid = sups[state.sel_supplier_idx].id.unwrap();
+    if sups.is_empty() {
+        ui.label("No suppliers yet.");
+        return;
+    }
+    if state.set_supplier_idx >= sups.len() {
+        state.set_supplier_idx = 0;
+    }
 
     egui::ComboBox::from_label("Supplier")
-        .selected_text(sups[state.sel_supplier_idx].name.clone())
+        .selected_text(sups[state.set_supplier_idx].name.clone())
         .show_ui(ui, |cb| {
             for (i, s) in sups.iter().enumerate() {
-                cb.selectable_value(&mut state.sel_supplier_idx, i, s.name.clone());
+                cb.selectable_value(&mut state.set_supplier_idx, i, s.name.clone());
             }
         });
 
+    let sid = sups[state.set_supplier_idx].id.unwrap();
+
     ui.separator();
+
+    // 2) Neue Category anlegen
     ui.horizontal(|ui| {
         ui.text_edit_singleline(&mut state.cat_new_name);
-        if ui.button("Add category").clicked() && !state.cat_new_name.trim().is_empty() {
-            let _ = rt.block_on(categories::create(db, sid, &state.cat_new_name));
-            state.cat_new_name.clear();
+        if ui.button("Add category").clicked() {
+            let name = state.cat_new_name.trim();
+            if !name.is_empty() {
+                let _ = rt.block_on(categories::create(db, sid, name));
+                state.cat_new_name.clear();
+            }
         }
     });
 
+    ui.separator();
+    ui.label("Existing categories");
+
+    // 3) Liste anzeigen
     let cats = rt.block_on(categories::list_by_supplier(db, sid)).unwrap_or_default();
-    for c in cats {
+
+    for c in &cats {
         ui.horizontal(|ui| {
-            ui.label(format!("#{} {}", c.position, c.name));
-            if ui.button("↑").clicked() {
-                let _ = rt.block_on(categories::move_up(db, sid, c.id.unwrap()));
+            ui.monospace(format!("#{} {}", c.position, c.name));
+
+            if ui.button("Edit").clicked() {
+                state.cat_edit_id = c.id;
+                state.cat_edit_name = c.name.clone();
+                state.cat_edit_pos = c.position;
             }
-            if ui.button("↓").clicked() {
-                let _ = rt.block_on(categories::move_down(db, sid, c.id.unwrap()));
-            }
-            if ui.button("Rename").clicked() {
-                state.cat_rename_id = c.id;
-                state.cat_rename_text = c.name.clone();
-            }
+
             if ui.button("Delete").clicked() {
-                let _ = rt.block_on(categories::delete(db, c.id.unwrap()));
+                if let Some(id) = c.id {
+                    let _ = rt.block_on(categories::delete(db, id));
+                }
             }
         });
     }
 
-    if let Some(cid) = state.cat_rename_id {
+    // 4) Edit-Form (Position + Name)
+    if let Some(edit_id) = state.cat_edit_id {
         ui.separator();
-        ui.label("Rename category");
-        ui.text_edit_singleline(&mut state.cat_rename_text);
+        ui.heading("Edit category");
+
+        ui.horizontal(|ui| {
+            ui.label("Position");
+            ui.add(egui::DragValue::new(&mut state.cat_edit_pos).range(0..=10_000));
+            ui.label("Name");
+            ui.text_edit_singleline(&mut state.cat_edit_name);
+        });
+
         ui.horizontal(|ui| {
             if ui.button("Save").clicked() {
-                let _ = rt.block_on(categories::rename(db, cid, &state.cat_rename_text));
-                state.cat_rename_id = None;
-                state.cat_rename_text.clear();
+                let name = state.cat_edit_name.trim().to_string();
+                if !name.is_empty() {
+                    let _ = rt.block_on(categories::update(db, edit_id, &name, state.cat_edit_pos));
+                    // UI-State zurücksetzen
+                    state.cat_edit_id = None;
+                    state.cat_edit_name.clear();
+                    state.cat_edit_pos = 0;
+                }
             }
             if ui.button("Cancel").clicked() {
-                state.cat_rename_id = None;
-                state.cat_rename_text.clear();
+                state.cat_edit_id = None;
+                state.cat_edit_name.clear();
+                state.cat_edit_pos = 0;
             }
         });
+
+        ui.label("Hinweis: Positionen werden aufsteigend sortiert. Bei gleichen Positionen entscheidet der Name.");
     }
 }
 

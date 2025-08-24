@@ -35,44 +35,17 @@ pub async fn create(db: &Db, supplier_id: ObjectId, name: &str) -> Result<Object
     Ok(r.inserted_id.as_object_id().unwrap())
 }
 
-pub async fn rename(db: &Db, id: ObjectId, name: &str) -> Result<()> {
-    coll(db)
-        .update_one(doc! { "_id": id }, doc! { "$set": { "name": name } })
-        .await?;
-    Ok(())
-}
-
 pub async fn delete(db: &Db, id: ObjectId) -> Result<()> {
     coll(db).delete_one(doc! { "_id": id }).await?;
     Ok(())
 }
 
-pub async fn move_up(db: &Db, supplier_id: ObjectId, id: ObjectId) -> Result<()> {
-    move_rel(db, supplier_id, id, -1).await
-}
-pub async fn move_down(db: &Db, supplier_id: ObjectId, id: ObjectId) -> Result<()> {
-    move_rel(db, supplier_id, id, 1).await
-}
-
-async fn move_rel(db: &Db, supplier_id: ObjectId, id: ObjectId, delta: i64) -> Result<()> {
-    let items = list_by_supplier(db, supplier_id).await?;
-    let idx = items.iter().position(|c| c.id == Some(id));
-    if let Some(i) = idx {
-        let j = if delta < 0 {
-            i.saturating_sub(1)
-        } else {
-            (i + 1).min(items.len().saturating_sub(1))
-        };
-        if i != j {
-            let pi = items[i].position;
-            let pj = items[j].position;
-            coll(db)
-                .update_one(doc!{ "_id": items[i].id.unwrap() }, doc!{ "$set": { "position": pj } })
-                .await?;
-            coll(db)
-                .update_one(doc!{ "_id": items[j].id.unwrap() }, doc!{ "$set": { "position": pi } })
-                .await?;
-        }
-    }
+pub async fn update(db: &Db, id: ObjectId, name: &str, position: i64) -> Result<()> {
+    coll(db)
+        .update_one(
+            doc! { "_id": id },
+            doc! { "$set": { "name": name, "position": position } },
+        )
+        .await?;
     Ok(())
 }
