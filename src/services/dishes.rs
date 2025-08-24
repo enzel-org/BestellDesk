@@ -19,10 +19,12 @@ pub async fn list_by_supplier(db: &Db, supplier_id: ObjectId) -> Result<Vec<Dish
     Ok(out)
 }
 
+#[allow(dead_code)]
 pub async fn get(db: &Db, id: ObjectId) -> Result<Option<Dish>> {
     Ok(coll(db).find_one(doc! { "_id": id }).await?)
 }
 
+#[allow(dead_code)]
 pub async fn create(
     db: &Db,
     supplier_id: ObjectId,

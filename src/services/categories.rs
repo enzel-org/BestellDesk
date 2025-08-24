@@ -23,7 +23,6 @@ pub async fn list_by_supplier(db: &Db, supplier_id: ObjectId) -> Result<Vec<Cate
 }
 
 pub async fn create(db: &Db, supplier_id: ObjectId, name: &str) -> Result<ObjectId> {
-    // position = max(position)+1
     let list = list_by_supplier(db, supplier_id).await?;
     let pos = list.last().map(|c| c.position + 1).unwrap_or(0);
     let c = Category {
@@ -56,7 +55,7 @@ pub async fn move_down(db: &Db, supplier_id: ObjectId, id: ObjectId) -> Result<(
 }
 
 async fn move_rel(db: &Db, supplier_id: ObjectId, id: ObjectId, delta: i64) -> Result<()> {
-    let mut items = list_by_supplier(db, supplier_id).await?;
+    let items = list_by_supplier(db, supplier_id).await?;
     let idx = items.iter().position(|c| c.id == Some(id));
     if let Some(i) = idx {
         let j = if delta < 0 {
@@ -65,7 +64,6 @@ async fn move_rel(db: &Db, supplier_id: ObjectId, id: ObjectId, delta: i64) -> R
             (i + 1).min(items.len().saturating_sub(1))
         };
         if i != j {
-            // swap positions
             let pi = items[i].position;
             let pj = items[j].position;
             coll(db)

@@ -3,7 +3,6 @@ use mongodb::bson::{doc, oid::ObjectId, DateTime, Document};
 
 use crate::db::Db;
 
-/// items: Vec<(dish_id, name, qty, unit_price_cents, note, variant)>
 pub async fn create_with_notes(
     db: &Db,
     customer_name: &str,

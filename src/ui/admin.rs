@@ -10,14 +10,12 @@ enum AdminPage { Menu, Suppliers, Dishes, Categories, Settings }
 pub struct AdminState {
     page: AdminPage,
 
-    // Suppliers (create/edit)
     supplier_name: String,
     supplier_fee: i64,
     edit_supplier_id: Option<ObjectId>,
     edit_supplier_name: String,
     edit_supplier_fee: i64,
 
-    // Dishes (create/edit)
     dish_name: String,
     dish_price: i64,
     pub sel_supplier_idx: usize,
@@ -36,17 +34,14 @@ pub struct AdminState {
     edit_new_size_label: String,
     edit_new_size_price: i64,
 
-    // Category selection for create/edit dish
     available_categories: Vec<Category>,
     chosen_categories_create: Vec<ObjectId>,
     chosen_categories_edit: Vec<ObjectId>,
 
-    // Categories page
     cat_new_name: String,
     cat_rename_id: Option<ObjectId>,
     cat_rename_text: String,
 
-    // Settings
     pub set_supplier_idx: usize,
 }
 
@@ -98,7 +93,6 @@ fn eur(cents: i64) -> String {
     format!("{sign}€{}.{}", abs / 100, format!("{:02}", abs % 100))
 }
 
-/// Render Admin root
 pub fn render(
     ui: &mut egui::Ui,
     rt: &tokio::runtime::Runtime,
@@ -108,7 +102,6 @@ pub fn render(
     authed: &mut bool,
     state: &mut AdminState,
 ) {
-    // Bootstrap admin
     let need_bootstrap = rt.block_on(admin_users::count(db)).unwrap_or(0) == 0;
     if need_bootstrap {
         ui.heading("Create first admin user");
@@ -125,7 +118,6 @@ pub fn render(
         return;
     }
 
-    // Login
     if !*authed {
         ui.heading("Admin login");
         ui.label("Username");
@@ -140,7 +132,6 @@ pub fn render(
         return;
     }
 
-    // Nav
     ui.horizontal(|ui| {
         if ui.button("Menu").clicked()       { state.page = AdminPage::Menu; }
         if ui.button("Suppliers").clicked()  { state.page = AdminPage::Suppliers; }
@@ -150,7 +141,6 @@ pub fn render(
     });
     ui.separator();
 
-    // Route
     match state.page {
         AdminPage::Menu => { ui.heading("Admin"); ui.label("Choose a section above."); }
         AdminPage::Suppliers => page_suppliers(ui, rt, db, state),
@@ -170,7 +160,6 @@ fn page_suppliers(
 ) {
     ui.heading("Suppliers");
 
-    // Create
     ui.separator();
     ui.label("Create supplier");
     ui.horizontal(|ui| {
@@ -190,7 +179,6 @@ fn page_suppliers(
         }
     });
 
-    // List
     ui.separator();
     ui.label("Existing suppliers");
     let list = rt.block_on(suppliers::list(db)).unwrap_or_default();
@@ -210,7 +198,6 @@ fn page_suppliers(
         });
     }
 
-    // Edit form
     if let Some(eid) = state.edit_supplier_id {
         ui.separator();
         ui.heading("Edit supplier");
@@ -284,7 +271,6 @@ fn page_dishes(
     if state.sel_supplier_idx >= sups.len() { state.sel_supplier_idx = 0; }
     let sid = sups[state.sel_supplier_idx].id.unwrap();
 
-    // load categories for this supplier
     state.available_categories = rt.block_on(categories::list_by_supplier(db, sid)).unwrap_or_default();
 
     egui::ComboBox::from_label("Supplier")
@@ -298,7 +284,6 @@ fn page_dishes(
     ui.separator();
     ui.label("Create dish");
 
-    // Category checkboxes for create
     ui.horizontal_wrapped(|ui| {
         ui.label("Categories:");
         for c in &state.available_categories {
@@ -313,7 +298,6 @@ fn page_dishes(
         }
     });
 
-    // Create form
     ui.horizontal(|ui| {
         ui.label("Nr.");
         ui.text_edit_singleline(&mut state.dish_number);
@@ -426,12 +410,10 @@ fn page_dishes(
         });
     }
 
-    // Edit form
     if let Some(eid) = state.edit_id {
         ui.separator();
         ui.heading("Edit dish");
 
-        // Category checkboxes for edit
         ui.horizontal_wrapped(|ui| {
             ui.label("Categories:");
             for c in &state.available_categories {

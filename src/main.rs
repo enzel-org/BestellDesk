@@ -13,19 +13,15 @@ use tokio::runtime::Runtime;
 
 #[derive(Default)]
 struct BestellAppState {
-    // UI State
     order_state: ui::order::OrderState,
     admin_state: ui::admin::AdminState,
 
-    // Persisted config
     server_input: String,
     remember_server: bool,
     connect_err: Option<String>,
 
-    // Simple tab state
     tab: ui::UiTab,
 
-    // Admin login state
     admin_user: String,
     admin_pass: String,
     admin_authed: bool,
@@ -48,7 +44,6 @@ enum AppMsg {
 
 impl Default for BestellApp {
     fn default() -> Self {
-        // Load persisted local config and ensure client_id
         let mut cfg = config::load().unwrap_or_default();
         if cfg.client_id.is_none() {
             cfg.client_id = Some(uuid::Uuid::new_v4().to_string());
@@ -63,7 +58,6 @@ impl Default for BestellApp {
                 server_input,
                 remember_server: cfg.remember_server,
                 order_state: ui::order::OrderState {
-                    // Inject client_id so orders can include it
                     client_id: client_id.clone(),
                     ..Default::default()
                 },
@@ -90,7 +84,6 @@ impl App for BestellApp {
                         Ok(dbh) => {
                             self.state.connect_err = None;
 
-                            // Persist config without losing client_id
                             let mut cfg = config::load().unwrap_or_default();
                             cfg.remember_server = self.state.remember_server;
                             cfg.mongo_uri = if self.state.remember_server {
@@ -103,7 +96,6 @@ impl App for BestellApp {
                             }
                             let _ = config::save(&cfg);
 
-                            // Spawn watchers
                             let (tx, rx) = mpsc::unbounded_channel::<AppMsg>();
                             let db_clone = dbh.clone();
                             self.rt.spawn(db::watch_settings(db_clone.clone(), tx.clone()));
@@ -127,7 +119,6 @@ impl App for BestellApp {
             return;
         }
 
-        // Top tab bar
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.selectable_label(self.state.tab == ui::UiTab::Order, "Order").clicked() {
@@ -145,7 +136,6 @@ impl App for BestellApp {
             });
         });
 
-        // Handle realtime messages (change streams)
         if let Some(rx) = &mut self.rx {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
@@ -170,7 +160,6 @@ impl App for BestellApp {
             }
         }
 
-        // Routed content
         egui::CentralPanel::default().show(ctx, |ui| match self.state.tab {
             ui::UiTab::Order => ui::render_order(
                 ui,

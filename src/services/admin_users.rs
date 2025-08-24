@@ -2,7 +2,7 @@ use anyhow::Result;
 use mongodb::bson::doc;
 use mongodb::Collection;
 
-use crate::auth; // hash_password / verify_password
+use crate::auth;
 use crate::db::Db;
 use crate::model::AdminUser;
 
@@ -11,7 +11,6 @@ fn coll(db: &Db) -> Collection<AdminUser> {
 }
 
 pub async fn count(db: &Db) -> Result<i64> {
-    // count_documents -> u64, wir brauchen i64
     let n = coll(db).count_documents(doc! {}).await? as i64;
     Ok(n)
 }

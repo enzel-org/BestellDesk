@@ -8,8 +8,8 @@ use crate::services::{dishes, orders, settings, suppliers, categories};
 pub(crate) struct ItemSel {
     pub(crate) dish_idx: usize,
     pub(crate) qty: i32,
-    pub(crate) size_idx: Option<usize>, // only for Pizza
-    pub(crate) note: String,            // optional
+    pub(crate) size_idx: Option<usize>,
+    pub(crate) note: String,
 }
 
 #[derive(Default)]
@@ -19,9 +19,8 @@ pub struct OrderState {
     pub supplier_id: Option<ObjectId>,
     pub dishes: Vec<Dish>,
 
-    // categories (tabs)
     pub categories: Vec<Category>,
-    pub selected_category: Option<ObjectId>, // None = "All"
+    pub selected_category: Option<ObjectId>,
 
     pub(crate) selections: Vec<ItemSel>,
     pub customer_name: String,
@@ -103,7 +102,6 @@ pub fn render(
     ui.label("Your name");
     ui.text_edit_singleline(&mut state.customer_name);
 
-    // Category tabs
     ui.separator();
     ui.horizontal_wrapped(|ui| {
         let all_selected = state.selected_category.is_none();
@@ -114,7 +112,6 @@ pub fn render(
             let sel = state.selected_category == c.id;
             if ui.selectable_label(sel, &c.name).clicked() {
                 state.selected_category = c.id;
-                // keep current selections but ensure dish_idx still valid in filter (optional)
             }
         }
     });
@@ -122,7 +119,6 @@ pub fn render(
     ui.separator();
     ui.label("Dishes");
 
-    // helper: filtered view (orig idx + ref)
     let filtered: Vec<(usize, &Dish)> = state.dishes
         .iter()
         .enumerate()
@@ -139,7 +135,6 @@ pub fn render(
                 ui.horizontal(|ui| {
                     ui.label(format!("Dish #{}", i + 1));
                     let cur = &state.dishes[sel.dish_idx];
-                    // Dropdown shows only filtered entries, but sets dish_idx to original index
                     egui::ComboBox::from_id_salt(("dish_select", i))
                         .selected_text(dish_label(cur))
                         .show_ui(ui, |cb| {
@@ -148,7 +143,6 @@ pub fn render(
                             }
                         });
 
-                    // Size (only for pizza)
                     let d = &state.dishes[sel.dish_idx];
                     if let Some(sizes) = &d.pizza_sizes {
                         if sel.size_idx.is_none() && !sizes.is_empty() { sel.size_idx = Some(0); }
@@ -175,7 +169,6 @@ pub fn render(
                     ui.text_edit_singleline(&mut sel.note);
                 });
 
-                // Line total
                 let d = &state.dishes[sel.dish_idx];
                 let unit = if let Some(sizes) = &d.pizza_sizes {
                     let idx = sel.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
@@ -187,7 +180,6 @@ pub fn render(
         });
     }
 
-    // Summary
     let items_total: i64 = state.selections.iter().map(|s| {
         let d = &state.dishes[s.dish_idx];
         let unit = if let Some(sizes) = &d.pizza_sizes {

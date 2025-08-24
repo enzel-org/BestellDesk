@@ -1,4 +1,3 @@
-// src/services/settings.rs
 use anyhow::Result;
 use mongodb::{bson::{doc, oid::ObjectId}, Collection};
 use crate::{db::Db, model::AppSettings};

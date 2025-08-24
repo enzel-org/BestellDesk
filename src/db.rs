@@ -6,7 +6,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Clone)]
 pub struct Db {
-    pub client: Client,
+    _client: Client,
     pub db: Database,
 }
 
@@ -20,17 +20,15 @@ pub async fn connect(uri: &str) -> Result<Db> {
         .default_database()
         .unwrap_or_else(|| client.database("bestelldesk"));
     db.run_command(doc! { "ping": 1 }).await?;
-    Ok(Db { client, db })
+    Ok(Db { _client: client, db })
 }
 
 impl Db {
-    // Constrained so it matches mongodb::Database::collection bounds.
     pub fn collection<T: Send + Sync>(&self, name: &str) -> Collection<T> {
         self.db.collection::<T>(name)
     }
 }
 
-// Watcher für Settings
 pub async fn watch_settings(db: Db, tx: UnboundedSender<crate::AppMsg>) {
     let coll = db.collection::<crate::model::AppSettings>("settings");
     let mut stream = match coll.watch().await {
@@ -44,7 +42,6 @@ pub async fn watch_settings(db: Db, tx: UnboundedSender<crate::AppMsg>) {
     }
 }
 
-// Watcher für Suppliers
 pub async fn watch_suppliers(db: Db, tx: UnboundedSender<crate::AppMsg>) {
     let coll = db.collection::<crate::model::Supplier>("suppliers");
     let mut stream = match coll.watch().await {
@@ -58,7 +55,6 @@ pub async fn watch_suppliers(db: Db, tx: UnboundedSender<crate::AppMsg>) {
     }
 }
 
-// Watcher für Dishes
 pub async fn watch_dishes(db: Db, tx: UnboundedSender<crate::AppMsg>) {
     let coll = db.collection::<crate::model::Dish>("dishes");
     let mut stream = match coll.watch().await {
@@ -72,7 +68,6 @@ pub async fn watch_dishes(db: Db, tx: UnboundedSender<crate::AppMsg>) {
     }
 }
 
-// Watcher für Orders
 pub async fn watch_orders(db: Db, tx: UnboundedSender<crate::AppMsg>) {
     let coll = db.collection::<crate::model::Order>("orders");
     let mut stream = match coll.watch().await {

@@ -16,7 +16,6 @@ pub struct AppSettings {
     pub active_supplier_id: Option<ObjectId>,
 }
 
-/// Admin-Benutzer für das Admin-Panel
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdminUser {
     #[serde(rename = "_id", skip_serializing_if = "Option::is_none")]
@@ -25,7 +24,6 @@ pub struct AdminUser {
     pub password_hash: String,
 }
 
-/// Preisvariante für Pizzen
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PizzaSize {
     pub label: String,
@@ -46,7 +44,6 @@ pub struct Dish {
     pub number: Option<String>,
     #[serde(default)]
     pub pizza_sizes: Option<Vec<PizzaSize>>,
-    /// References to categories this dish belongs to (many-to-many).
     #[serde(default)]
     pub categories: Vec<ObjectId>,
 }
@@ -65,7 +62,7 @@ pub struct DishInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderItem {
     pub dish_id: ObjectId,
-    pub name: String,               // ggf. inkl. Größenlabel
+    pub name: String,
     pub qty: i32,
     pub unit_price_cents: i64,
     pub line_total_cents: i64,
@@ -102,6 +99,5 @@ pub struct Category {
     pub id: Option<ObjectId>,
     pub supplier_id: ObjectId,
     pub name: String,
-    /// Sorting position (lower first)
     pub position: i64,
 }
