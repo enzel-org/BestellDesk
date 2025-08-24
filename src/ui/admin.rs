@@ -5,45 +5,44 @@ use crate::model::{Dish, DishInput, PizzaSize, Supplier};
 use crate::services::{admin_users, dishes, settings, suppliers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AdminPage {
-    Menu,
-    Suppliers,
-    Dishes,
-    Settings,
-}
+enum AdminPage { Menu, Suppliers, Dishes, Settings }
 
 pub struct AdminState {
     page: AdminPage,
 
-    // Suppliers page state
+    // Suppliers (Create)
     supplier_name: String,
     supplier_fee: i64,
 
-    // Dishes page state (Create)
+    // Suppliers (Edit)
+    edit_supplier_id: Option<ObjectId>,
+    edit_supplier_name: String,
+    edit_supplier_fee: i64,
+
+    // Dishes (Create)
     dish_name: String,
     dish_price: i64,
     pub sel_supplier_idx: usize,
     tag_is_pizza: bool,
-    // Nummer (auch für ungetaggte Gerichte)
     dish_number: String,
 
     // Pizza Create
-    pizza_number: String, // historisch – wir nutzen dish_number
+    pizza_number: String,
     pizza_sizes: Vec<PizzaSize>,
     new_size_label: String,
     new_size_price: i64,
 
-    // Dishes page state (Edit)
+    // Dishes (Edit)
     edit_id: Option<ObjectId>,
     edit_is_pizza: bool,
     edit_name: String,
     edit_number: String,
-    edit_price: i64,            // nur plain
-    edit_sizes: Vec<PizzaSize>, // nur pizza
+    edit_price: i64,
+    edit_sizes: Vec<PizzaSize>,
     edit_new_size_label: String,
     edit_new_size_price: i64,
 
-    // Settings page state
+    // Settings
     pub set_supplier_idx: usize,
 }
 
@@ -53,17 +52,18 @@ impl Default for AdminState {
             page: AdminPage::Menu,
             supplier_name: String::new(),
             supplier_fee: 0,
+            edit_supplier_id: None,
+            edit_supplier_name: String::new(),
+            edit_supplier_fee: 0,
             dish_name: String::new(),
             dish_price: 0,
             sel_supplier_idx: 0,
             tag_is_pizza: false,
             dish_number: String::new(),
-
             pizza_number: String::new(),
             pizza_sizes: vec![],
             new_size_label: String::new(),
             new_size_price: 0,
-
             edit_id: None,
             edit_is_pizza: false,
             edit_name: String::new(),
@@ -72,7 +72,6 @@ impl Default for AdminState {
             edit_sizes: vec![],
             edit_new_size_label: String::new(),
             edit_new_size_price: 0,
-
             set_supplier_idx: 0,
         }
     }
@@ -84,7 +83,6 @@ fn eur(cents: i64) -> String {
     format!("{sign}€{}.{}", abs / 100, format!("{:02}", abs % 100))
 }
 
-/// Render the Admin area: bootstrap admin user → login → section router.
 pub fn render(
     ui: &mut egui::Ui,
     rt: &tokio::runtime::Runtime,
@@ -94,7 +92,7 @@ pub fn render(
     authed: &mut bool,
     state: &mut AdminState,
 ) {
-    // 1) Bootstrap admin
+    // Bootstrap
     let need_bootstrap = rt.block_on(admin_users::count(db)).unwrap_or(0) == 0;
     if need_bootstrap {
         ui.heading("Create first admin user");
@@ -111,7 +109,7 @@ pub fn render(
         return;
     }
 
-    // 2) Login
+    // Login
     if !*authed {
         ui.heading("Admin login");
         ui.label("Username");
@@ -120,17 +118,13 @@ pub fn render(
         ui.add(egui::TextEdit::singleline(pass).password(true));
         if ui.button("Login").clicked() {
             let ok = rt.block_on(admin_users::verify(db, user, pass)).unwrap_or(false);
-            if ok {
-                *authed = true;
-                pass.clear();
-            } else {
-                ui.colored_label(egui::Color32::RED, "Invalid credentials");
-            }
+            if ok { *authed = true; pass.clear(); }
+            else { ui.colored_label(egui::Color32::RED, "Invalid credentials"); }
         }
         return;
     }
 
-    // 3) Nav
+    // Nav
     ui.horizontal(|ui| {
         if ui.button("Menu").clicked()      { state.page = AdminPage::Menu; }
         if ui.button("Suppliers").clicked() { state.page = AdminPage::Suppliers; }
@@ -139,7 +133,6 @@ pub fn render(
     });
     ui.separator();
 
-    // 4) Route
     match state.page {
         AdminPage::Menu => { ui.heading("Admin"); ui.label("Choose a section above."); }
         AdminPage::Suppliers => page_suppliers(ui, rt, db, state),
@@ -148,6 +141,8 @@ pub fn render(
     }
 }
 
+/* ---------------- Suppliers ---------------- */
+
 fn page_suppliers(
     ui: &mut egui::Ui,
     rt: &tokio::runtime::Runtime,
@@ -155,6 +150,8 @@ fn page_suppliers(
     state: &mut AdminState,
 ) {
     ui.heading("Suppliers");
+
+    // Create
     ui.separator();
     ui.label("Create supplier");
     ui.horizontal(|ui| {
@@ -166,58 +163,77 @@ fn page_suppliers(
         }
     });
 
+    // List
     ui.separator();
     ui.label("Existing suppliers");
-    for s in rt.block_on(suppliers::list(db)).unwrap_or_default() {
+    let list = rt.block_on(suppliers::list(db)).unwrap_or_default();
+    for s in list {
         ui.horizontal(|ui| {
             ui.label(format!("{} (fee: {} cents)", s.name, s.delivery_fee_cents));
             if let Some(id) = s.id {
-                if ui.button("Delete").clicked() { let _ = rt.block_on(suppliers::delete(db, id)); }
+                if ui.button("Edit").clicked() {
+                    state.edit_supplier_id = Some(id);
+                    state.edit_supplier_name = s.name.clone();
+                    state.edit_supplier_fee = s.delivery_fee_cents;
+                }
+                if ui.button("Delete").clicked() {
+                    let _ = rt.block_on(suppliers::delete(db, id));
+                }
+            }
+        });
+    }
+
+    // Edit form
+    if let Some(eid) = state.edit_supplier_id {
+        ui.separator();
+        ui.heading("Edit supplier");
+        ui.horizontal(|ui| {
+            ui.label("Name");
+            ui.text_edit_singleline(&mut state.edit_supplier_name);
+            ui.label("Delivery fee (cents)");
+            ui.add(egui::DragValue::new(&mut state.edit_supplier_fee).range(0..=10_000));
+        });
+
+        ui.horizontal(|ui| {
+            if ui.button("Save").clicked() {
+                let _ = rt.block_on(suppliers::update(db, eid, &state.edit_supplier_name, state.edit_supplier_fee));
+                state.edit_supplier_id = None;
+                state.edit_supplier_name.clear();
+                state.edit_supplier_fee = 0;
+            }
+            if ui.button("Cancel").clicked() {
+                state.edit_supplier_id = None;
+                state.edit_supplier_name.clear();
+                state.edit_supplier_fee = 0;
             }
         });
     }
 }
 
+/* ---------------- Dishes (Create + Edit) ---------------- */
+
 fn parse_nr_key(nr_opt: &Option<String>) -> i64 {
-    // extrahiert führende Zahl aus "P12", "12", "Nr. 12", etc., sonst groß
     if let Some(nr) = nr_opt {
         let digits: String = nr.chars().filter(|c| c.is_ascii_digit()).collect();
         if !digits.is_empty() {
-            if let Ok(x) = digits.parse::<i64>() {
-                return x;
-            }
+            if let Ok(x) = digits.parse::<i64>() { return x; }
         }
     }
-    i64::MAX // ohne Nummer ans Ende
+    i64::MAX
 }
 
 fn row_label(d: &Dish) -> String {
     if d.tags.iter().any(|t| t == "Pizza") {
-        // "Pizza Nr. XX: Name [size:price, ...]"
         let nr = d.number.clone().unwrap_or_default();
-        let sizes = d
-            .pizza_sizes
-            .as_ref()
-            .map(|v| {
-                v.iter()
-                    .map(|p| format!("{} {}", p.label, eur(p.price_cents)))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            })
+        let sizes = d.pizza_sizes.as_ref()
+            .map(|v| v.iter().map(|p| format!("{} {}", p.label, eur(p.price_cents))).collect::<Vec<_>>().join(", "))
             .unwrap_or_default();
-        if nr.is_empty() {
-            format!("Pizza: {} [{}]", d.name, sizes)
-        } else {
-            format!("Pizza Nr. {}: {} [{}]", nr, d.name, sizes)
-        }
+        if nr.is_empty() { format!("Pizza: {} [{}]", d.name, sizes) }
+        else { format!("Pizza Nr. {}: {} [{}]", nr, d.name, sizes) }
     } else {
-        // "{nr}: Name (Preis)"
         let nr = d.number.clone().unwrap_or_default();
-        if nr.is_empty() {
-            format!("{} ({})", d.name, eur(d.price_cents))
-        } else {
-            format!("{}: {} ({})", nr, d.name, eur(d.price_cents))
-        }
+        if nr.is_empty() { format!("{} ({})", d.name, eur(d.price_cents)) }
+        else { format!("{}: {} ({})", nr, d.name, eur(d.price_cents)) }
     }
 }
 
@@ -228,6 +244,7 @@ fn page_dishes(
     state: &mut AdminState,
 ) {
     ui.heading("Dishes");
+
     let sups = rt.block_on(suppliers::list(db)).unwrap_or_default();
     if sups.is_empty() { ui.label("No suppliers yet."); return; }
     if state.sel_supplier_idx >= sups.len() { state.sel_supplier_idx = 0; }
@@ -244,7 +261,7 @@ fn page_dishes(
     ui.separator();
     ui.label("Create dish");
 
-    // Create form (Nummer auch bei non-Pizza)
+    // Create form
     ui.horizontal(|ui| {
         ui.label("Nr.");
         ui.text_edit_singleline(&mut state.dish_number);
@@ -258,32 +275,26 @@ fn page_dishes(
         }
     });
 
+    // Pizza-Create UI
     if state.tag_is_pizza {
         ui.separator();
         ui.label("Pizza sizes");
 
-        // Direkt editierbar (kein "Update"-Knopf)
         let mut remove_idx: Option<usize> = None;
         for idx in 0..state.pizza_sizes.len() {
             ui.horizontal(|ui| {
                 ui.label(format!("#{idx}"));
-                ui.label("Label");
                 let l_ref: *mut String = &mut state.pizza_sizes[idx].label;
                 let p_ref: *mut i64 = &mut state.pizza_sizes[idx].price_cents;
-                // SAFETY: Wir bleiben im UI-Frame, keine Aliasierung außerhalb.
                 unsafe {
                     ui.text_edit_singleline(&mut *l_ref);
                     ui.label("Price (cents)");
                     ui.add(egui::DragValue::new(&mut *p_ref).range(0..=100_000));
                 }
-                if ui.button("Remove").clicked() {
-                    remove_idx = Some(idx);
-                }
+                if ui.button("Remove").clicked() { remove_idx = Some(idx); }
             });
         }
-        if let Some(i) = remove_idx {
-            if i < state.pizza_sizes.len() { state.pizza_sizes.remove(i); }
-        }
+        if let Some(i) = remove_idx { if i < state.pizza_sizes.len() { state.pizza_sizes.remove(i); } }
 
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut state.new_size_label);
@@ -299,6 +310,7 @@ fn page_dishes(
         });
     }
 
+    // Create click
     if ui.button("Create").clicked() {
         if state.tag_is_pizza {
             let input = DishInput {
@@ -319,21 +331,18 @@ fn page_dishes(
                 state.tag_is_pizza = false;
             }
         } else if !state.dish_name.trim().is_empty() {
-            let id = rt.block_on(dishes::create(db, sid, &state.dish_name, state.dish_price)).ok();
-            // Nummer nachziehen (update_plain), wenn gesetzt
-            if let (Some(_), true) = (id, !state.dish_number.trim().is_empty()) {
-                if let Ok(dl) = rt.block_on(dishes::list_by_supplier(db, sid)) {
-                    if let Some(d) = dl.into_iter().filter(|x| x.name == state.dish_name && x.number.is_none()).last() {
-                        let _ = rt.block_on(dishes::update_plain(
-                            db,
-                            d.id.unwrap(),
-                            &state.dish_name,
-                            Some(state.dish_number.trim().to_string()),
-                            state.dish_price,
-                        ));
-                    }
-                }
-            }
+            let number_opt = if state.dish_number.trim().is_empty() {
+                None
+            } else {
+                Some(state.dish_number.trim().to_string())
+            };
+            let _ = rt.block_on(dishes::create_plain(
+                db,
+                sid,
+                &state.dish_name,
+                number_opt,
+                state.dish_price,
+            ));
             state.dish_name.clear();
             state.dish_number.clear();
             state.dish_price = 0;
@@ -343,11 +352,15 @@ fn page_dishes(
     ui.separator();
     ui.label("Existing dishes");
 
-    // Liste laden und nach Nummer (asc) sortieren
     let mut dlist = rt.block_on(dishes::list_by_supplier(db, sid)).unwrap_or_default();
-    dlist.sort_by_key(|d| parse_nr_key(&d.number));
+    dlist.sort_by_key(|d| {
+        if let Some(n) = &d.number {
+            let digits: String = n.chars().filter(|c| c.is_ascii_digit()).collect();
+            if let Ok(v) = digits.parse::<i64>() { return v; }
+        }
+        i64::MAX
+    });
 
-    // Zeilen mit Edit/Delete
     for d in dlist {
         ui.horizontal(|ui| {
             ui.label(row_label(&d));
@@ -373,7 +386,6 @@ fn page_dishes(
         });
     }
 
-    // Edit-Formular
     if let Some(eid) = state.edit_id {
         ui.separator();
         ui.heading("Edit dish");
@@ -392,34 +404,23 @@ fn page_dishes(
         if state.edit_is_pizza {
             ui.label("Pizza sizes");
 
-            // Direkt editierbar: wir binden die Felder **by-ref** an state.edit_sizes
             let mut remove_idx: Option<usize> = None;
             for idx in 0..state.edit_sizes.len() {
                 ui.horizontal(|ui| {
                     ui.label(format!("#{idx}"));
 
-                    // Sicher Referenzen ausleihen und im UI bearbeiten:
                     let l_ref: *mut String = &mut state.edit_sizes[idx].label;
                     let p_ref: *mut i64 = &mut state.edit_sizes[idx].price_cents;
-
-                    // SAFETY: begrenzter Scope des UI-Aufrufs, keine aliasierten
-                    // konkurrierenden &mut außerhalb der Closure.
                     unsafe {
                         ui.label("Label");
                         ui.text_edit_singleline(&mut *l_ref);
-
                         ui.label("Price (cents)");
                         ui.add(egui::DragValue::new(&mut *p_ref).range(0..=100_000));
                     }
-
-                    if ui.button("Remove").clicked() {
-                        remove_idx = Some(idx);
-                    }
+                    if ui.button("Remove").clicked() { remove_idx = Some(idx); }
                 });
             }
-            if let Some(i) = remove_idx {
-                if i < state.edit_sizes.len() { state.edit_sizes.remove(i); }
-            }
+            if let Some(i) = remove_idx { if i < state.edit_sizes.len() { state.edit_sizes.remove(i); } }
 
             ui.horizontal(|ui| {
                 ui.text_edit_singleline(&mut state.edit_new_size_label);
@@ -439,29 +440,23 @@ fn page_dishes(
             if ui.button("Save").clicked() {
                 if state.edit_is_pizza {
                     let _ = rt.block_on(dishes::update_pizza(
-                        db,
-                        eid,
-                        &state.edit_name,
+                        db, eid, &state.edit_name,
                         if state.edit_number.trim().is_empty() { None } else { Some(state.edit_number.trim().to_string()) },
                         state.edit_sizes.clone(),
                     ));
                 } else {
                     let _ = rt.block_on(dishes::update_plain(
-                        db,
-                        eid,
-                        &state.edit_name,
+                        db, eid, &state.edit_name,
                         if state.edit_number.trim().is_empty() { None } else { Some(state.edit_number.trim().to_string()) },
                         state.edit_price,
                     ));
                 }
-                // Close editor
                 state.edit_id = None;
                 state.edit_name.clear();
                 state.edit_number.clear();
                 state.edit_sizes.clear();
                 state.edit_price = 0;
             }
-
             if ui.button("Cancel").clicked() {
                 state.edit_id = None;
                 state.edit_name.clear();
@@ -472,6 +467,8 @@ fn page_dishes(
         });
     }
 }
+
+/* ---------------- Settings ---------------- */
 
 fn page_settings(
     ui: &mut egui::Ui,

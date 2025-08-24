@@ -6,13 +6,13 @@ use mongodb::Collection;
 use crate::db::Db;
 use crate::model::{Dish, DishInput, PizzaSize};
 
-
 fn coll(db: &Db) -> Collection<Dish> {
     db.collection::<Dish>("dishes")
 }
 
 pub async fn list_by_supplier(db: &Db, supplier_id: ObjectId) -> Result<Vec<Dish>> {
-    let mut cur = coll(db).find(doc! { "supplier_id": supplier_id }).await?;
+    let coll = db.collection::<Dish>("dishes");
+    let mut cur = coll.find(doc! { "supplier_id": supplier_id }).await?;
     let mut out = Vec::new();
     while let Some(d) = cur.try_next().await? {
         out.push(d);
@@ -24,7 +24,12 @@ pub async fn get(db: &Db, id: ObjectId) -> Result<Option<Dish>> {
     Ok(coll(db).find_one(doc! { "_id": id }).await?)
 }
 
-pub async fn create(db: &Db, supplier_id: ObjectId, name: &str, price_cents: i64) -> Result<ObjectId> {
+pub async fn create(
+    db: &Db,
+    supplier_id: ObjectId,
+    name: &str,
+    price_cents: i64,
+) -> Result<ObjectId> {
     let d = Dish {
         id: None,
         supplier_id,
@@ -38,8 +43,29 @@ pub async fn create(db: &Db, supplier_id: ObjectId, name: &str, price_cents: i64
     Ok(r.inserted_id.as_object_id().unwrap())
 }
 
+/// Plain (untagged) dish direkt **mit Nummer** anlegen.
+pub async fn create_plain(
+    db: &Db,
+    supplier_id: ObjectId,
+    name: &str,
+    number: Option<String>,
+    price_cents: i64,
+) -> Result<ObjectId> {
+    let d = Dish {
+        id: None,
+        supplier_id,
+        name: name.to_string(),
+        price_cents,
+        tags: vec![],
+        number,             // hier direkt setzen
+        pizza_sizes: None,  // untagged ⇒ keine Größen
+    };
+    let r = coll(db).insert_one(d).await?;
+    Ok(r.inserted_id.as_object_id().unwrap())
+}
+
+/// Tags/Pizza-Variante
 pub async fn create_with_tags(db: &Db, input: DishInput) -> Result<ObjectId> {
-    // Falls es eine Pizza ist, kommt price_cents == None und pizza_sizes: Some
     let d = Dish {
         id: None,
         supplier_id: input.supplier_id,
@@ -58,7 +84,7 @@ pub async fn delete(db: &Db, id: ObjectId) -> Result<()> {
     Ok(())
 }
 
-/// Update für „plain“ Gerichte (ohne Pizza-Tag): Name, Nummer, Preis.
+/// Update für „plain“ Gerichte (ohne Pizza-Tag).
 pub async fn update_plain(
     db: &Db,
     id: ObjectId,
@@ -81,8 +107,7 @@ pub async fn update_plain(
     Ok(())
 }
 
-/// Update für Pizza-Gerichte: Name, Nummer, Größenvarianten.
-/// Preis pro Größe steckt in `pizza_sizes`.
+/// Update für Pizza-Gerichte (Größen + Preise je Größe).
 pub async fn update_pizza(
     db: &Db,
     id: ObjectId,
