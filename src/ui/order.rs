@@ -33,6 +33,17 @@ fn eur(cents: i64) -> String {
     format!("{sign}€{}.{}", abs / 100, format!("{:02}", abs % 100))
 }
 
+fn dish_sort_key(d: &Dish) -> (i32, i64, String) {
+    // (has_number_flag, numeric_value, name) – kleinere Tupel kommen zuerst
+    if let Some(nr) = &d.number {
+        let digits: String = nr.chars().filter(|c| c.is_ascii_digit()).collect();
+        if let Ok(v) = digits.parse::<i64>() {
+            return (0, v, d.name.clone());
+        }
+    }
+    (1, i64::MAX, d.name.clone())
+}
+
 fn dish_label(d: &Dish) -> String {
     let nr = d.number.clone().unwrap_or_default();
     let base = if nr.is_empty() {
@@ -67,11 +78,15 @@ pub fn render(
             }
         });
         match res {
-            Ok((sid, name, fee, ds)) => {
+            Ok((sid, name, fee, mut ds)) => {
+                // sort by number asc (fallback: name)
+                ds.sort_by_key(dish_sort_key);
+
                 state.supplier_id = sid;
                 state.supplier_name = name;
                 state.delivery_fee_cents = fee;
                 state.dishes = ds;
+
                 if state.selections.is_empty() {
                     state.selections.push(ItemSel {
                         dish_idx: 0,
