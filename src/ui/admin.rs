@@ -1,7 +1,7 @@
 use eframe::egui;
 use mongodb::bson::oid::ObjectId;
 
-use crate::model::{Supplier, DishInput, PizzaSize};
+use crate::model::{Dish, DishInput, PizzaSize, Supplier};
 use crate::services::{admin_users, dishes, settings, suppliers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,17 +19,29 @@ pub struct AdminState {
     supplier_name: String,
     supplier_fee: i64,
 
-    // Dishes page state
+    // Dishes page state (Create)
     dish_name: String,
     dish_price: i64,
     pub sel_supplier_idx: usize,
-
-    // Tags/Pizza-UI
     tag_is_pizza: bool,
-    pizza_number: String,
-    pizza_sizes: Vec<PizzaSize>, // dynamische rows
+    // Nummer (auch für ungetaggte Gerichte)
+    dish_number: String,
+
+    // Pizza Create
+    pizza_number: String, // historisch – wir nutzen dish_number
+    pizza_sizes: Vec<PizzaSize>,
     new_size_label: String,
     new_size_price: i64,
+
+    // Dishes page state (Edit)
+    edit_id: Option<ObjectId>,
+    edit_is_pizza: bool,
+    edit_name: String,
+    edit_number: String,
+    edit_price: i64,            // nur plain
+    edit_sizes: Vec<PizzaSize>, // nur pizza
+    edit_new_size_label: String,
+    edit_new_size_price: i64,
 
     // Settings page state
     pub set_supplier_idx: usize,
@@ -45,13 +57,31 @@ impl Default for AdminState {
             dish_price: 0,
             sel_supplier_idx: 0,
             tag_is_pizza: false,
+            dish_number: String::new(),
+
             pizza_number: String::new(),
             pizza_sizes: vec![],
             new_size_label: String::new(),
             new_size_price: 0,
+
+            edit_id: None,
+            edit_is_pizza: false,
+            edit_name: String::new(),
+            edit_number: String::new(),
+            edit_price: 0,
+            edit_sizes: vec![],
+            edit_new_size_label: String::new(),
+            edit_new_size_price: 0,
+
             set_supplier_idx: 0,
         }
     }
+}
+
+fn eur(cents: i64) -> String {
+    let sign = if cents < 0 { "-" } else { "" };
+    let abs = cents.abs();
+    format!("{sign}€{}.{}", abs / 100, format!("{:02}", abs % 100))
 }
 
 /// Render the Admin area: bootstrap admin user → login → section router.
@@ -148,6 +178,49 @@ fn page_suppliers(
     }
 }
 
+fn parse_nr_key(nr_opt: &Option<String>) -> i64 {
+    // extrahiert führende Zahl aus "P12", "12", "Nr. 12", etc., sonst groß
+    if let Some(nr) = nr_opt {
+        let digits: String = nr.chars().filter(|c| c.is_ascii_digit()).collect();
+        if !digits.is_empty() {
+            if let Ok(x) = digits.parse::<i64>() {
+                return x;
+            }
+        }
+    }
+    i64::MAX // ohne Nummer ans Ende
+}
+
+fn row_label(d: &Dish) -> String {
+    if d.tags.iter().any(|t| t == "Pizza") {
+        // "Pizza Nr. XX: Name [size:price, ...]"
+        let nr = d.number.clone().unwrap_or_default();
+        let sizes = d
+            .pizza_sizes
+            .as_ref()
+            .map(|v| {
+                v.iter()
+                    .map(|p| format!("{} {}", p.label, eur(p.price_cents)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        if nr.is_empty() {
+            format!("Pizza: {} [{}]", d.name, sizes)
+        } else {
+            format!("Pizza Nr. {}: {} [{}]", nr, d.name, sizes)
+        }
+    } else {
+        // "{nr}: Name (Preis)"
+        let nr = d.number.clone().unwrap_or_default();
+        if nr.is_empty() {
+            format!("{} ({})", d.name, eur(d.price_cents))
+        } else {
+            format!("{}: {} ({})", nr, d.name, eur(d.price_cents))
+        }
+    }
+}
+
 fn page_dishes(
     ui: &mut egui::Ui,
     rt: &tokio::runtime::Runtime,
@@ -171,51 +244,45 @@ fn page_dishes(
     ui.separator();
     ui.label("Create dish");
 
+    // Create form (Nummer auch bei non-Pizza)
     ui.horizontal(|ui| {
+        ui.label("Nr.");
+        ui.text_edit_singleline(&mut state.dish_number);
         ui.text_edit_singleline(&mut state.dish_name);
         ui.toggle_value(&mut state.tag_is_pizza, "Pizza");
+
         if state.tag_is_pizza {
-            ui.add_enabled(false, egui::DragValue::new(&mut state.dish_price).prefix("€ price disabled"));
+            ui.add_enabled(false, egui::DragValue::new(&mut state.dish_price).prefix("€ disabled"));
         } else {
             ui.add(egui::DragValue::new(&mut state.dish_price).range(0..=100_000).prefix("Price (cents): "));
         }
     });
 
     if state.tag_is_pizza {
-        ui.horizontal(|ui| {
-            ui.label("Nr.");
-            ui.text_edit_singleline(&mut state.pizza_number);
-        });
-
         ui.separator();
         ui.label("Pizza sizes");
 
-        // Sicheres Iterieren + Editieren (kein doppeltes Borrow)
-        let mut to_remove: Option<usize> = None;
-        let len = state.pizza_sizes.len();
-        for idx in 0..len {
-            // lokale Kopie bearbeiten
-            let mut item = state.pizza_sizes[idx].clone();
+        // Direkt editierbar (kein "Update"-Knopf)
+        let mut remove_idx: Option<usize> = None;
+        for idx in 0..state.pizza_sizes.len() {
             ui.horizontal(|ui| {
                 ui.label(format!("#{idx}"));
                 ui.label("Label");
-                ui.text_edit_singleline(&mut item.label);
-                ui.label("Price (cents)");
-                ui.add(egui::DragValue::new(&mut item.price_cents).range(0..=100_000));
-
-                if ui.button("Update").clicked() {
-                    // nach der UI-Zeile zurückschreiben
-                    state.pizza_sizes[idx] = item.clone();
+                let l_ref: *mut String = &mut state.pizza_sizes[idx].label;
+                let p_ref: *mut i64 = &mut state.pizza_sizes[idx].price_cents;
+                // SAFETY: Wir bleiben im UI-Frame, keine Aliasierung außerhalb.
+                unsafe {
+                    ui.text_edit_singleline(&mut *l_ref);
+                    ui.label("Price (cents)");
+                    ui.add(egui::DragValue::new(&mut *p_ref).range(0..=100_000));
                 }
                 if ui.button("Remove").clicked() {
-                    to_remove = Some(idx);
+                    remove_idx = Some(idx);
                 }
             });
         }
-        if let Some(idx) = to_remove {
-            if idx < state.pizza_sizes.len() {
-                state.pizza_sizes.remove(idx);
-            }
+        if let Some(i) = remove_idx {
+            if i < state.pizza_sizes.len() { state.pizza_sizes.remove(i); }
         }
 
         ui.horizontal(|ui| {
@@ -239,42 +306,168 @@ fn page_dishes(
                 name: state.dish_name.trim().to_string(),
                 price_cents: None,
                 tags: vec!["Pizza".to_string()],
-                number: if state.pizza_number.trim().is_empty() { None } else { Some(state.pizza_number.trim().to_string()) },
+                number: if state.dish_number.trim().is_empty() { None } else { Some(state.dish_number.trim().to_string()) },
                 pizza_sizes: if state.pizza_sizes.is_empty() { None } else { Some(state.pizza_sizes.clone()) },
             };
             if !input.name.is_empty() && input.pizza_sizes.is_some() {
                 let _ = rt.block_on(dishes::create_with_tags(db, input));
                 state.dish_name.clear();
-                state.pizza_number.clear();
+                state.dish_number.clear();
                 state.pizza_sizes.clear();
                 state.new_size_label.clear();
                 state.new_size_price = 0;
                 state.tag_is_pizza = false;
             }
         } else if !state.dish_name.trim().is_empty() {
-            let _ = rt.block_on(dishes::create(db, sid, &state.dish_name, state.dish_price));
+            let id = rt.block_on(dishes::create(db, sid, &state.dish_name, state.dish_price)).ok();
+            // Nummer nachziehen (update_plain), wenn gesetzt
+            if let (Some(_), true) = (id, !state.dish_number.trim().is_empty()) {
+                if let Ok(dl) = rt.block_on(dishes::list_by_supplier(db, sid)) {
+                    if let Some(d) = dl.into_iter().filter(|x| x.name == state.dish_name && x.number.is_none()).last() {
+                        let _ = rt.block_on(dishes::update_plain(
+                            db,
+                            d.id.unwrap(),
+                            &state.dish_name,
+                            Some(state.dish_number.trim().to_string()),
+                            state.dish_price,
+                        ));
+                    }
+                }
+            }
             state.dish_name.clear();
+            state.dish_number.clear();
             state.dish_price = 0;
         }
     }
 
     ui.separator();
     ui.label("Existing dishes");
-    for d in rt.block_on(dishes::list_by_supplier(db, sid)).unwrap_or_default() {
+
+    // Liste laden und nach Nummer (asc) sortieren
+    let mut dlist = rt.block_on(dishes::list_by_supplier(db, sid)).unwrap_or_default();
+    dlist.sort_by_key(|d| parse_nr_key(&d.number));
+
+    // Zeilen mit Edit/Delete
+    for d in dlist {
         ui.horizontal(|ui| {
-            if d.tags.iter().any(|t| t == "Pizza") {
-                let sizes = d.pizza_sizes.as_ref()
-                    .map(|v| v.iter().map(|p| format!("{}:{}c", p.label, p.price_cents)).collect::<Vec<_>>().join(", "))
-                    .unwrap_or_default();
-                let nr = d.number.clone().unwrap_or_default();
-                ui.label(format!("Pizza {} — {} [{}]", nr, d.name, sizes));
-            } else {
-                ui.label(format!("{} ({} cents)", d.name, d.price_cents));
-            }
+            ui.label(row_label(&d));
             if let Some(id) = d.id {
+                if ui.button("Edit").clicked() {
+                    state.edit_id = Some(id);
+                    let is_pizza = d.tags.iter().any(|t| t == "Pizza");
+                    state.edit_is_pizza = is_pizza;
+                    state.edit_name = d.name.clone();
+                    state.edit_number = d.number.clone().unwrap_or_default();
+                    if is_pizza {
+                        state.edit_sizes = d.pizza_sizes.clone().unwrap_or_default();
+                        state.edit_price = 0;
+                    } else {
+                        state.edit_price = d.price_cents;
+                        state.edit_sizes.clear();
+                    }
+                }
                 if ui.button("Delete").clicked() {
                     let _ = rt.block_on(dishes::delete(db, id));
                 }
+            }
+        });
+    }
+
+    // Edit-Formular
+    if let Some(eid) = state.edit_id {
+        ui.separator();
+        ui.heading("Edit dish");
+
+        ui.horizontal(|ui| {
+            ui.label("Nr.");
+            ui.text_edit_singleline(&mut state.edit_number);
+            ui.text_edit_singleline(&mut state.edit_name);
+            if state.edit_is_pizza {
+                ui.add_enabled(false, egui::DragValue::new(&mut state.edit_price).prefix("€ disabled"));
+            } else {
+                ui.add(egui::DragValue::new(&mut state.edit_price).range(0..=100_000).prefix("Price (cents): "));
+            }
+        });
+
+        if state.edit_is_pizza {
+            ui.label("Pizza sizes");
+
+            // Direkt editierbar: wir binden die Felder **by-ref** an state.edit_sizes
+            let mut remove_idx: Option<usize> = None;
+            for idx in 0..state.edit_sizes.len() {
+                ui.horizontal(|ui| {
+                    ui.label(format!("#{idx}"));
+
+                    // Sicher Referenzen ausleihen und im UI bearbeiten:
+                    let l_ref: *mut String = &mut state.edit_sizes[idx].label;
+                    let p_ref: *mut i64 = &mut state.edit_sizes[idx].price_cents;
+
+                    // SAFETY: begrenzter Scope des UI-Aufrufs, keine aliasierten
+                    // konkurrierenden &mut außerhalb der Closure.
+                    unsafe {
+                        ui.label("Label");
+                        ui.text_edit_singleline(&mut *l_ref);
+
+                        ui.label("Price (cents)");
+                        ui.add(egui::DragValue::new(&mut *p_ref).range(0..=100_000));
+                    }
+
+                    if ui.button("Remove").clicked() {
+                        remove_idx = Some(idx);
+                    }
+                });
+            }
+            if let Some(i) = remove_idx {
+                if i < state.edit_sizes.len() { state.edit_sizes.remove(i); }
+            }
+
+            ui.horizontal(|ui| {
+                ui.text_edit_singleline(&mut state.edit_new_size_label);
+                ui.add(egui::DragValue::new(&mut state.edit_new_size_price).range(0..=100_000).prefix("Price (cents): "));
+                if ui.button("Add size").clicked() && !state.edit_new_size_label.trim().is_empty() {
+                    state.edit_sizes.push(PizzaSize {
+                        label: state.edit_new_size_label.clone(),
+                        price_cents: state.edit_new_size_price,
+                    });
+                    state.edit_new_size_label.clear();
+                    state.edit_new_size_price = 0;
+                }
+            });
+        }
+
+        ui.horizontal(|ui| {
+            if ui.button("Save").clicked() {
+                if state.edit_is_pizza {
+                    let _ = rt.block_on(dishes::update_pizza(
+                        db,
+                        eid,
+                        &state.edit_name,
+                        if state.edit_number.trim().is_empty() { None } else { Some(state.edit_number.trim().to_string()) },
+                        state.edit_sizes.clone(),
+                    ));
+                } else {
+                    let _ = rt.block_on(dishes::update_plain(
+                        db,
+                        eid,
+                        &state.edit_name,
+                        if state.edit_number.trim().is_empty() { None } else { Some(state.edit_number.trim().to_string()) },
+                        state.edit_price,
+                    ));
+                }
+                // Close editor
+                state.edit_id = None;
+                state.edit_name.clear();
+                state.edit_number.clear();
+                state.edit_sizes.clear();
+                state.edit_price = 0;
+            }
+
+            if ui.button("Cancel").clicked() {
+                state.edit_id = None;
+                state.edit_name.clear();
+                state.edit_number.clear();
+                state.edit_sizes.clear();
+                state.edit_price = 0;
             }
         });
     }

@@ -33,18 +33,30 @@ fn eur(cents: i64) -> String {
     format!("{sign}€{}.{}", abs / 100, format!("{:02}", abs % 100))
 }
 
+fn dish_label(d: &Dish) -> String {
+    let nr = d.number.clone().unwrap_or_default();
+    let base = if nr.is_empty() {
+        d.name.clone()
+    } else {
+        format!("Nr. {}: {}", nr, d.name)
+    };
+    if d.tags.iter().any(|t| t == "Pizza") {
+        base
+    } else {
+        format!("{} ({})", base, eur(d.price_cents))
+    }
+}
+
 pub fn render(
     ui: &mut egui::Ui,
     rt: &tokio::runtime::Runtime,
     db: &crate::db::Db,
     state: &mut OrderState,
 ) {
-    // Lazy-load once
     if !state.loaded && state.load_err.is_none() {
         let res = rt.block_on(async {
             if let Some(sid) = settings::get_active_supplier_id(db).await? {
                 if let Some(supp) = suppliers::get(db, sid).await? {
-                    // ^^^^^^^^^^^^^ fix: suppliers::get(...) statt get_supplier(...)
                     let ds = dishes::list_by_supplier(db, sid).await?;
                     Ok::<_, anyhow::Error>((Some(sid), supp.name, supp.delivery_fee_cents, ds))
                 } else {
@@ -61,9 +73,12 @@ pub fn render(
                 state.delivery_fee_cents = fee;
                 state.dishes = ds;
                 if state.selections.is_empty() {
-                    state
-                        .selections
-                        .push(ItemSel { dish_idx: 0, qty: 1, size_idx: None, note: String::new() });
+                    state.selections.push(ItemSel {
+                        dish_idx: 0,
+                        qty: 1,
+                        size_idx: None,
+                        note: String::new(),
+                    });
                 }
                 state.loaded = true;
             }
@@ -72,6 +87,7 @@ pub fn render(
     }
 
     ui.heading("Place your order");
+
     if let Some(err) = &state.load_err {
         ui.colored_label(egui::Color32::RED, err);
         ui.label("Admin must set an active supplier and menu.");
@@ -97,9 +113,12 @@ pub fn render(
     ui.horizontal(|ui| {
         if ui.button("+ Add dish").clicked() {
             let last_idx = state.selections.last().map(|s| s.dish_idx).unwrap_or(0);
-            state
-                .selections
-                .push(ItemSel { dish_idx: last_idx, qty: 1, size_idx: None, note: String::new() });
+            state.selections.push(ItemSel {
+                dish_idx: last_idx,
+                qty: 1,
+                size_idx: None,
+                note: String::new(),
+            });
         }
         if ui.button("− Remove last").clicked() && state.selections.len() > 1 {
             state.selections.pop();
@@ -110,71 +129,74 @@ pub fn render(
     ui.label("Dishes");
 
     for (i, sel) in state.selections.iter_mut().enumerate() {
-        ui.group(|ui| {
-            ui.horizontal(|ui| {
-                let current = &state.dishes[sel.dish_idx];
-                let show_name = if current.tags.iter().any(|t| t == "Pizza") {
-                    let nr = current.number.clone().unwrap_or_default();
-                    format!("{} {}", nr, current.name)
-                } else {
-                    current.name.clone()
-                };
-                egui::ComboBox::from_label(format!("Dish #{}", i + 1))
-                    .selected_text(show_name)
-                    .show_ui(ui, |cb| {
-                        for (idx, d) in state.dishes.iter().enumerate() {
-                            let label = if d.tags.iter().any(|t| t == "Pizza") {
-                                let nr = d.number.clone().unwrap_or_default();
-                                format!("{} {}", nr, d.name)
-                            } else {
-                                d.name.clone()
-                            };
-                            cb.selectable_value(&mut sel.dish_idx, idx, label);
-                        }
-                    });
-
-                let d = &state.dishes[sel.dish_idx];
-                if let Some(sizes) = &d.pizza_sizes {
-                    if sel.size_idx.is_none() && !sizes.is_empty() {
-                        sel.size_idx = Some(0);
-                    }
-                    let curr_idx = sel.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
-                    let curr = &sizes[curr_idx];
-                    egui::ComboBox::from_label("Size")
-                        .selected_text(format!("{} ({})", curr.label, eur(curr.price_cents)))
+        ui.push_id(i, |ui| {
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    // Dish selector
+                    ui.label(format!("Dish #{}", i + 1));
+                    let dcur = &state.dishes[sel.dish_idx];
+                    egui::ComboBox::from_id_salt(("dish_select", i))
+                        .selected_text(dish_label(dcur))
                         .show_ui(ui, |cb| {
-                            for (sidx, s) in sizes.iter().enumerate() {
-                                cb.selectable_value(
-                                    &mut sel.size_idx,
-                                    Some(sidx),
-                                    format!("{} ({})", s.label, eur(s.price_cents)),
-                                );
+                            for (idx, d) in state.dishes.iter().enumerate() {
+                                cb.selectable_value(&mut sel.dish_idx, idx, dish_label(d));
                             }
                         });
+
+                    // Size (nur Pizza)
+                    let d = &state.dishes[sel.dish_idx];
+                    if let Some(sizes) = &d.pizza_sizes {
+                        if sel.size_idx.is_none() && !sizes.is_empty() {
+                            sel.size_idx = Some(0);
+                        }
+                        let sidx = sel.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
+                        let scur = &sizes[sidx];
+
+                        ui.label("Size");
+                        egui::ComboBox::from_id_salt(("size_select", i))
+                            .selected_text(format!("{} ({})", scur.label, eur(scur.price_cents)))
+                            .show_ui(ui, |cb| {
+                                for (j, s) in sizes.iter().enumerate() {
+                                    cb.selectable_value(
+                                        &mut sel.size_idx,
+                                        Some(j),
+                                        format!("{} ({})", s.label, eur(s.price_cents)),
+                                    );
+                                }
+                            });
+                    } else {
+                        ui.monospace(format!("Unit: {}", eur(d.price_cents)));
+                    }
+
+                    // Qty
+                    ui.add(
+                        egui::DragValue::new(&mut sel.qty)
+                            .range(1..=20)
+                            .prefix("Qty: "),
+                    );
+                });
+
+                // Note
+                ui.horizontal(|ui| {
+                    ui.label("Note (optional)");
+                    ui.text_edit_singleline(&mut sel.note);
+                });
+
+                // Line total
+                let d = &state.dishes[sel.dish_idx];
+                let unit = if let Some(sizes) = &d.pizza_sizes {
+                    let idx = sel.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
+                    sizes[idx].price_cents
                 } else {
-                    ui.monospace(format!("Unit: {}", eur(d.price_cents)));
-                }
-
-                ui.add(egui::DragValue::new(&mut sel.qty).range(1..=20).prefix("Qty: "));
+                    d.price_cents
+                } as i64;
+                let line_total = unit * (sel.qty as i64);
+                ui.monospace(format!("Line total: {}", eur(line_total)));
             });
-
-            ui.horizontal(|ui| {
-                ui.label("Note (optional)");
-                ui.text_edit_singleline(&mut sel.note);
-            });
-
-            let d = &state.dishes[sel.dish_idx];
-            let unit = if let Some(sizes) = &d.pizza_sizes {
-                let idx = sel.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
-                sizes[idx].price_cents
-            } else {
-                d.price_cents
-            } as i64;
-            let line_total = unit * (sel.qty as i64);
-            ui.monospace(format!("Line total: {}", eur(line_total)));
         });
     }
 
+    // Summary
     let items_total: i64 = state
         .selections
         .iter()
@@ -189,6 +211,7 @@ pub fn render(
             unit * (s.qty as i64)
         })
         .sum();
+
     let grand_total = items_total + state.delivery_fee_cents;
 
     ui.separator();
@@ -203,46 +226,48 @@ pub fn render(
 
     if ui.add_enabled(can_submit, egui::Button::new("Submit order")).clicked() {
         if let Some(supplier_id) = state.supplier_id {
-            let items: Vec<(ObjectId, String, i32, i64, Option<String>, Option<String>)> =
-                state
-                    .selections
-                    .iter()
-                    .map(|s| {
-                        let d = &state.dishes[s.dish_idx];
-                        if let Some(sizes) = &d.pizza_sizes {
-                            let idx =
-                                s.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
-                            let sz = &sizes[idx];
-                            let nr = d.number.clone().unwrap_or_default();
-                            let name = format!("{} {} ({})", nr, d.name, sz.label);
-                            (
-                                d.id.unwrap(),
-                                name,
-                                s.qty,
-                                sz.price_cents as i64,
-                                if s.note.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(s.note.clone())
-                                },
-                                Some(sz.label.clone()),
-                            )
+            // Items bauen
+            let items: Vec<(ObjectId, String, i32, i64, Option<String>, Option<String>)> = state
+                .selections
+                .iter()
+                .map(|s| {
+                    let d = &state.dishes[s.dish_idx];
+                    if let Some(sizes) = &d.pizza_sizes {
+                        let idx = s.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
+                        let sz = &sizes[idx];
+                        let nr = d.number.clone().unwrap_or_default();
+                        let base = if nr.is_empty() {
+                            d.name.clone()
                         } else {
-                            (
-                                d.id.unwrap(),
-                                d.name.clone(),
-                                s.qty,
-                                d.price_cents as i64,
-                                if s.note.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(s.note.clone())
-                                },
-                                None,
-                            )
-                        }
-                    })
-                    .collect();
+                            format!("Nr. {}: {}", nr, d.name)
+                        };
+                        let name = format!("{} ({})", base, sz.label);
+                        (
+                            d.id.unwrap(),
+                            name,
+                            s.qty,
+                            sz.price_cents as i64,
+                            if s.note.trim().is_empty() { None } else { Some(s.note.clone()) },
+                            Some(sz.label.clone()),
+                        )
+                    } else {
+                        let nr = d.number.clone().unwrap_or_default();
+                        let base = if nr.is_empty() {
+                            d.name.clone()
+                        } else {
+                            format!("Nr. {}: {}", nr, d.name)
+                        };
+                        (
+                            d.id.unwrap(),
+                            base,
+                            s.qty,
+                            d.price_cents as i64,
+                            if s.note.trim().is_empty() { None } else { Some(s.note.clone()) },
+                            None,
+                        )
+                    }
+                })
+                .collect();
 
             let res = rt.block_on(orders::create_with_notes(
                 db,
