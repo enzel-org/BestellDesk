@@ -157,20 +157,24 @@ pub fn render(
         if ui.button("Suppliers").clicked()  { state.page = AdminPage::Suppliers; }
         if ui.button("Dishes").clicked()     { state.page = AdminPage::Dishes; }
         if ui.button("Categories").clicked() { state.page = AdminPage::Categories; }
-        if ui.button("Orders").clicked()     { state.page = AdminPage::Orders; }
         if ui.button("Settings").clicked()   { state.page = AdminPage::Settings; }
+        if ui.button("Orders").clicked()     { state.page = AdminPage::Orders; }
     });
     ui.separator();
 
-
-    match state.page {
-        AdminPage::Menu => { ui.heading("Admin"); ui.label("Choose a section above."); }
-        AdminPage::Suppliers => page_suppliers(ui, rt, db, state),
-        AdminPage::Dishes => page_dishes(ui, rt, db, state),
-        AdminPage::Categories => page_categories(ui, rt, db, state),
-        AdminPage::Orders => page_orders(ui, rt, db, state),
-        AdminPage::Settings => page_settings(ui, rt, db, state),
-    }
+    // << Scrollbereich um den Seiteninhalt >>
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            match state.page {
+                AdminPage::Menu => { ui.heading("Admin"); ui.label("Choose a section above."); }
+                AdminPage::Suppliers => page_suppliers(ui, rt, db, state),
+                AdminPage::Dishes => page_dishes(ui, rt, db, state),
+                AdminPage::Categories => page_categories(ui, rt, db, state),
+                AdminPage::Settings => page_settings(ui, rt, db, state),
+                AdminPage::Orders => page_orders(ui, rt, db, state),
+            }
+        });
 }
 
 /* ---------------- Suppliers ---------------- */
@@ -655,7 +659,7 @@ fn page_orders(
         return;
     };
 
-    // Erstladen / Reload
+    // Bei Erstaufruf oder wenn Watcher anschlägt -> neu laden
     if state.orders_needs_reload || state.orders.is_empty() {
         state.orders = rt.block_on(orders::list_by_supplier(db, sid)).unwrap_or_default();
         state.orders_needs_reload = false;
@@ -663,10 +667,14 @@ fn page_orders(
         // Eingabepuffer für „paid“
         for o in &state.orders {
             let pid = o.id.unwrap(); // Orders aus DB haben _id
-            state.orders_paid_inputs.entry(pid).or_insert(o.paid_cents.unwrap_or(0));
+            state
+                .orders_paid_inputs
+                .entry(pid)
+                .or_insert(o.paid_cents.unwrap_or(0));
         }
     }
 
+    // Tabelle / Liste
     ui.separator();
     if state.orders.is_empty() {
         ui.label("No orders yet.");
@@ -675,7 +683,7 @@ fn page_orders(
 
     let mut total_all_cents: i64 = 0;
     let mut to_delete: Vec<ObjectId> = Vec::new();
-    // <- NEU: lokale Updates sammeln (id, paid, completed)
+    // lokale Updates sammeln (id, paid, completed)
     let mut pending_updates: Vec<(ObjectId, i64, bool)> = Vec::new();
 
     for o in &state.orders {
@@ -689,23 +697,23 @@ fn page_orders(
         total_all_cents += order_total;
 
         // Pufferwert für "Cash received"
-        let paid_buf = state.orders_paid_inputs.entry(oid).or_insert(o.paid_cents.unwrap_or(0));
+        let paid_buf = state
+            .orders_paid_inputs
+            .entry(oid)
+            .or_insert(o.paid_cents.unwrap_or(0));
         let paid_now = *paid_buf;
 
         // Delta: >0 Rückgeld, <0 Rest offen
         let delta = paid_now - order_total;
 
-        // Farbe für Name (completed erzwingt grün)
-        let mut name_color = if delta > 0 {
+        // Farbe NUR vom Delta abhängig (kein „für immer grün“)
+        let name_color = if delta > 0 {
             egui::Color32::LIGHT_BLUE // Change due
         } else if delta < 0 {
             egui::Color32::YELLOW // Still to pay
         } else {
             egui::Color32::from_rgb(20, 160, 20) // Balanced
         };
-        if o.completed.unwrap_or(false) {
-            name_color = egui::Color32::from_rgb(20, 160, 20); // Completed => grün
-        }
 
         egui::containers::CollapsingHeader::new(
             egui::RichText::new(o.customer_name.clone()).color(name_color),
@@ -737,7 +745,13 @@ fn page_orders(
                 let resp = ui.add(egui::DragValue::new(paid_buf).range(0..=1_000_000));
 
                 // Anzeige Delta
-                let diff_lbl = if delta > 0 { "Change due" } else if delta < 0 { "Still to pay" } else { "Balanced" };
+                let diff_lbl = if delta > 0 {
+                    "Change due"
+                } else if delta < 0 {
+                    "Still to pay"
+                } else {
+                    "Balanced"
+                };
                 let diff_color = if delta > 0 {
                     egui::Color32::LIGHT_BLUE
                 } else if delta < 0 {
@@ -747,29 +761,22 @@ fn page_orders(
                 };
                 ui.colored_label(diff_color, format!("{diff_lbl}: {}", eur(delta.abs())));
 
-                // Auto-Save bei Änderung
+                // Auto-Save bei Änderung: completed NUR wenn exakt ausgeglichen
                 if resp.changed() {
                     let new_paid = *paid_buf;
-                    // automatisch completed, wenn ausgeglichen – ansonsten bisherigen Status
-                    let new_completed = if o.completed.unwrap_or(false) {
-                        true
-                    } else {
-                        new_paid == order_total
-                    };
+                    let new_completed = new_paid == order_total;
 
-                    // DB sofort aktualisieren
                     let _ = rt.block_on(orders::set_paid_cents(db, oid, new_paid, new_completed));
-                    // Lokales Update erst NACH der Schleife anwenden
                     pending_updates.push((oid, new_paid, new_completed));
                 }
             });
 
             ui.horizontal(|ui| {
-                // Bestellung als erledigt markieren (unabhängig vom Delta)
+                // „Mark complete“: bezahlt = Gesamtsumme setzen -> sofort Balanced/Grün
                 if ui.button("Mark complete").clicked() {
-                    let new_paid = *paid_buf;
-                    let _ = rt.block_on(orders::set_paid_cents(db, oid, new_paid, true));
-                    pending_updates.push((oid, new_paid, true));
+                    *paid_buf = order_total;
+                    let _ = rt.block_on(orders::set_paid_cents(db, oid, order_total, true));
+                    pending_updates.push((oid, order_total, true));
                 }
 
                 // Bestellung löschen
@@ -780,7 +787,7 @@ fn page_orders(
         });
     }
 
-    // <- NEU: gesammelte lokale Updates anwenden (jetzt ist der Borrow aus der Schleife beendet)
+    // gesammelte lokale Updates anwenden
     for (id, paid, comp) in pending_updates {
         if let Some(loc) = state.orders.iter_mut().find(|x| x.id == Some(id)) {
             loc.paid_cents = Some(paid);
