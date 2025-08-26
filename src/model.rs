@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use mongodb::bson::oid::ObjectId;
+use mongodb::bson::{oid::ObjectId, DateTime};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Supplier {
@@ -65,8 +65,9 @@ pub struct OrderItem {
     pub name: String,
     pub qty: i32,
     pub unit_price_cents: i64,
-    pub line_total_cents: i64,
 
+    #[serde(default)]
+    pub line_total_cents: i64,
     #[serde(default)]
     pub note: Option<String>,
     #[serde(default)]
@@ -90,7 +91,12 @@ pub struct Order {
     pub grand_total_cents: i64,
 
     pub status: String,
-    pub created_at: mongodb::bson::DateTime,
+    pub created_at: DateTime,
+
+    #[serde(default)]
+    pub paid_cents: Option<i64>,
+    #[serde(default)]
+    pub completed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
