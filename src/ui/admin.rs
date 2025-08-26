@@ -44,6 +44,11 @@ pub struct AdminState {
     pub cat_edit_pos: i64,
 
     pub set_supplier_idx: usize,
+
+    backup_pass: String,
+    backup_export_path: String,
+    backup_import_path: String,
+    backup_msg: Option<(bool, String)>,
 }
 
 impl Default for AdminState {
@@ -85,6 +90,11 @@ impl Default for AdminState {
             cat_edit_pos: 0,
 
             set_supplier_idx: 0,
+
+            backup_pass: String::new(),
+            backup_export_path: "backup.json.enc".to_string(),
+            backup_import_path: String::new(),
+            backup_msg: None,
         }
     }
 }
@@ -646,6 +656,58 @@ fn page_settings(
         let sid = sups[state.set_supplier_idx].id.unwrap();
         let _ = rt.block_on(settings::set_active_supplier(db, sid));
     }
+
+    ui.separator();
+    ui.heading("Backup (verschlüsselt)");
+
+    ui.horizontal(|ui| {
+        ui.label("Passwort");
+        ui.add(egui::TextEdit::singleline(&mut state.backup_pass).password(true));
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Export-Datei");
+        ui.text_edit_singleline(&mut state.backup_export_path);
+        if ui.button("Export (encrypted)").clicked() {
+            if state.backup_pass.is_empty() || state.backup_export_path.trim().is_empty() {
+                state.backup_msg = Some((false, "Bitte Passwort und Dateipfad ausfüllen.".into()));
+            } else {
+                match rt.block_on(crate::services::backup::export_to_file(
+                    db,
+                    state.backup_export_path.trim(),
+                    state.backup_pass.trim(),
+                )) {
+                    Ok(_) => state.backup_msg = Some((true, format!("Export erfolgreich: {}", state.backup_export_path.trim()))),
+                    Err(e) => state.backup_msg = Some((false, format!("Export fehlgeschlagen: {e}"))),
+                }
+            }
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Import-Datei");
+        ui.text_edit_singleline(&mut state.backup_import_path);
+        if ui.button("Import (encrypted)").clicked() {
+            if state.backup_pass.is_empty() || state.backup_import_path.trim().is_empty() {
+                state.backup_msg = Some((false, "Bitte Passwort und Dateipfad ausfüllen.".into()));
+            } else {
+                match rt.block_on(crate::services::backup::import_from_file(
+                    db,
+                    state.backup_import_path.trim(),
+                    state.backup_pass.trim(),
+                )) {
+                    Ok(_) => state.backup_msg = Some((true, "Import erfolgreich (DB ersetzt).".into())),
+                    Err(e) => state.backup_msg = Some((false, format!("Import fehlgeschlagen: {e}"))),
+                }
+            }
+        }
+    });
+
+    if let Some((ok, msg)) = &state.backup_msg {
+        let color = if *ok { egui::Color32::from_rgb(20,160,20) } else { egui::Color32::RED };
+        ui.colored_label(color, msg);
+    }
+
 }
 
 fn id_to_name(sups: &[Supplier], id: ObjectId) -> String {

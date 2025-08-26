@@ -1,6 +1,6 @@
 [package]
 name = "bestellapp"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [dependencies]
@@ -21,3 +21,7 @@ argon2 = "0.5.3"
 rand = "0.8"
 uuid = "1.18.0"
 nanoid = "0.4.0"
+aes-gcm = "0.10.3"
+aes = "0.8.4"
+base64 = "0.22.1"
+getrandom = "*"
