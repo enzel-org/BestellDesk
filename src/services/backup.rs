@@ -82,7 +82,7 @@ fn encrypt(password: &str, plaintext: &[u8]) -> Result<EncBlob> {
         m_cost,
         t_cost,
         p_cost,
-        salt_b64: base64::engine::general_purpose::STANDARD.encode(&salt),
+        salt_b64: B64.encode(&salt),
         cipher: "aes-256-gcm".into(),
         nonce_b64: base64::engine::general_purpose::STANDARD.encode(&nonce),
         ct_b64: base64::engine::general_purpose::STANDARD.encode(&ct),
