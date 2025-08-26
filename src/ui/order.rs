@@ -1,8 +1,8 @@
 use eframe::egui;
 use mongodb::bson::oid::ObjectId;
 
-use crate::model::Dish;
-use crate::services::{dishes, orders, settings, suppliers};
+use crate::model::{Dish, Category};
+use crate::services::{dishes, orders, settings, suppliers, categories};
 
 #[derive(Clone)]
 pub(crate) struct ItemSel {
@@ -19,6 +19,10 @@ pub struct OrderState {
     pub supplier_id: Option<ObjectId>,
     pub dishes: Vec<Dish>,
 
+    // Kategorien für Tabs + aktuelle Auswahl
+    pub categories: Vec<Category>,
+    pub selected_category: Option<ObjectId>, // None = "Alle"
+
     pub(crate) selections: Vec<ItemSel>,
     pub customer_name: String,
     pub client_id: String,
@@ -26,6 +30,7 @@ pub struct OrderState {
     pub load_err: Option<String>,
     pub loaded: bool,
 
+    // Erfolgsmeldung nach dem Senden
     show_success: bool,
     success_lines: Vec<String>,
     success_total_cents: i64,
@@ -75,12 +80,14 @@ pub fn render(
     db: &crate::db::Db,
     state: &mut OrderState,
 ) {
+    // Lazy-Load: Lieferant, Gerichte und Kategorien
     if !state.loaded && state.load_err.is_none() {
         let res = rt.block_on(async {
             if let Some(sid) = settings::get_active_supplier_id(db).await? {
                 if let Some(supp) = suppliers::get(db, sid).await? {
                     let ds = dishes::list_by_supplier(db, sid).await?;
-                    Ok::<_, anyhow::Error>((Some(sid), supp.name, supp.delivery_fee_cents, ds))
+                    let cats = categories::list_by_supplier(db, sid).await.unwrap_or_default();
+                    Ok::<_, anyhow::Error>((Some(sid), supp.name, supp.delivery_fee_cents, ds, cats))
                 } else {
                     anyhow::bail!("Active supplier not found");
                 }
@@ -89,13 +96,15 @@ pub fn render(
             }
         });
         match res {
-            Ok((sid, name, fee, mut ds)) => {
+            Ok((sid, name, fee, mut ds, cats)) => {
                 ds.sort_by_key(dish_sort_key);
 
                 state.supplier_id = sid;
                 state.supplier_name = name;
                 state.delivery_fee_cents = fee;
                 state.dishes = ds;
+                state.categories = cats;
+                // selected_category bleibt None => "Alle"
 
                 if state.selections.is_empty() {
                     state.selections.push(ItemSel {
@@ -151,19 +160,62 @@ pub fn render(
     });
 
     ui.separator();
+
+    // Kategorie-Tabs (Alle + pro Category)
+    ui.horizontal_wrapped(|ui| {
+        // "Alle"
+        let all_selected = state.selected_category.is_none();
+        if ui.selectable_label(all_selected, "Alle").clicked() {
+            state.selected_category = None;
+        }
+        // Kategorien
+        for c in &state.categories {
+            let sel = state.selected_category == c.id;
+            if ui.selectable_label(sel, c.name.clone()).clicked() {
+                state.selected_category = c.id;
+            }
+        }
+    });
+
+    ui.separator();
     ui.label("Dishes");
 
     for (i, sel) in state.selections.iter_mut().enumerate() {
         ui.push_id(i, |ui| {
+            // Gefilterte Liste nach gewählter Kategorie
+            let filtered: Vec<(usize, &Dish)> = state
+                .dishes
+                .iter()
+                .enumerate()
+                .filter(|(_, d)| match state.selected_category {
+                    None => true,
+                    Some(cat) => d.categories.iter().any(|x| *x == cat),
+                })
+                .collect();
+
             ui.group(|ui| {
+                // Falls die Kategorie leer ist
+                if filtered.is_empty() {
+                    ui.colored_label(egui::Color32::YELLOW, "No dishes in this category.");
+                    return;
+                }
+
+                // Sicherstellen, dass die aktuelle Auswahl im Filter liegt
+                if !filtered.iter().any(|(idx, _)| *idx == sel.dish_idx) {
+                    if let Some((first_idx, _)) = filtered.first() {
+                        sel.dish_idx = *first_idx;
+                        sel.size_idx = None; // Size zurücksetzen, falls vorher Pizza war
+                    }
+                }
+
                 ui.horizontal(|ui| {
                     ui.label(format!("Dish #{}", i + 1));
                     let dcur = &state.dishes[sel.dish_idx];
                     egui::ComboBox::from_id_salt(("dish_select", i))
                         .selected_text(dish_label(dcur))
                         .show_ui(ui, |cb| {
-                            for (idx, d) in state.dishes.iter().enumerate() {
-                                cb.selectable_value(&mut sel.dish_idx, idx, dish_label(d));
+                            for (idx, d) in &filtered {
+                                cb.selectable_value(&mut sel.dish_idx, *idx, dish_label(d));
                             }
                         });
 
