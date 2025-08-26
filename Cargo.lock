@@ -521,7 +521,7 @@ checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
 
 [[package]]
 name = "bestellapp"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -532,7 +532,7 @@ dependencies = [
  "eframe",
  "egui",
  "futures-util",
- "getrandom 0.2.16",
+ "getrandom 0.3.3",
  "mongodb",
  "nanoid",
  "rand 0.8.5",

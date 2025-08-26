@@ -149,7 +149,7 @@ impl App for BestellApp {
                         self.state.order_state.load_err = None;
                     }
                     AppMsg::OrdersChanged => {
-                        // Placeholder for future admin "current orders" view refresh
+                        self.state.admin_state.orders_needs_reload = true;
                     }
                 }
             }

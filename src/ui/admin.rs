@@ -2,10 +2,10 @@ use eframe::egui;
 use mongodb::bson::oid::ObjectId;
 
 use crate::model::{Dish, DishInput, PizzaSize, Supplier, Category};
-use crate::services::{admin_users, dishes, settings, suppliers, categories};
+use crate::services::{admin_users, dishes, suppliers, categories};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AdminPage { Menu, Suppliers, Dishes, Categories, Settings }
+enum AdminPage { Menu, Suppliers, Dishes, Categories, Orders, Settings }
 
 pub struct AdminState {
     page: AdminPage,
@@ -49,6 +49,10 @@ pub struct AdminState {
     backup_export_path: String,
     backup_import_path: String,
     backup_msg: Option<(bool, String)>,
+
+    pub orders: Vec<crate::model::Order>,
+    pub orders_paid_inputs: std::collections::HashMap<ObjectId, i64>,
+    pub orders_needs_reload: bool,
 }
 
 impl Default for AdminState {
@@ -95,6 +99,10 @@ impl Default for AdminState {
             backup_export_path: "backup.json.enc".to_string(),
             backup_import_path: String::new(),
             backup_msg: None,
+
+            orders: vec![],
+            orders_paid_inputs: std::collections::HashMap::new(),
+            orders_needs_reload: true,
         }
     }
 }
@@ -150,8 +158,10 @@ pub fn render(
         if ui.button("Dishes").clicked()     { state.page = AdminPage::Dishes; }
         if ui.button("Categories").clicked() { state.page = AdminPage::Categories; }
         if ui.button("Settings").clicked()   { state.page = AdminPage::Settings; }
+        if ui.button("Orders").clicked()     { state.page = AdminPage::Orders; }
     });
     ui.separator();
+
 
     match state.page {
         AdminPage::Menu => { ui.heading("Admin"); ui.label("Choose a section above."); }
@@ -159,6 +169,7 @@ pub fn render(
         AdminPage::Dishes => page_dishes(ui, rt, db, state),
         AdminPage::Categories => page_categories(ui, rt, db, state),
         AdminPage::Settings => page_settings(ui, rt, db, state),
+        AdminPage::Orders => page_orders(ui, rt, db, state),
     }
 }
 
@@ -625,6 +636,139 @@ fn page_categories(
     }
 }
 
+/* ---------------- Orders page ---------------- */
+
+fn order_total_cents(o: &crate::model::Order) -> i64 {
+    // Sicher: wir summieren über gespeicherte Zeilensummen, falls vorhanden,
+    // andernfalls qty * unit_price_cents.
+    let items_sum: i64 = o.items.iter().map(|it| it.line_total_cents).sum();
+
+    items_sum + o.delivery_fee_cents
+}
+
+fn page_orders(
+    ui: &mut egui::Ui,
+    rt: &tokio::runtime::Runtime,
+    db: &crate::db::Db,
+    state: &mut AdminState,
+) {
+    use crate::services::{orders, settings};
+
+    ui.heading("Orders");
+
+    // aktiven Lieferanten ermitteln
+    let active = rt.block_on(settings::get_active_supplier_id(db)).ok().flatten();
+    let Some(sid) = active else {
+        ui.colored_label(egui::Color32::YELLOW, "No active supplier set in Settings.");
+        return;
+    };
+
+    // Erstladen / Reload angefordert?
+    if state.orders_needs_reload || state.orders.is_empty() {
+        state.orders = rt.block_on(orders::list_by_supplier(db, sid)).unwrap_or_default();
+        state.orders_needs_reload = false;
+
+        // Eingabepuffer initialisieren (Datenbank hat evtl. noch keine paid_cents)
+        for o in &state.orders {
+            if let Some(oid) = o.id {
+                state.orders_paid_inputs.entry(oid).or_insert(0);
+            }
+        }
+    }
+
+    ui.separator();
+    if state.orders.is_empty() {
+        ui.label("No orders yet.");
+        return;
+    }
+
+    let mut total_all_cents: i64 = 0;
+    let mut to_delete: Vec<ObjectId> = Vec::new();
+
+    for o in &state.orders {
+        let oid = o.id.unwrap();
+        let order_total = order_total_cents(o);
+        total_all_cents += order_total;
+
+        let paid_buf = state.orders_paid_inputs.entry(oid).or_insert(0);
+        let paid_now = *paid_buf;
+
+        let delta = paid_now - order_total; // >0 Rückgeld, <0 Rest offen
+        let completed = delta == 0;
+
+        egui::containers::CollapsingHeader::new(format!(
+            "{}{}",
+            o.customer_name,
+            if completed { " ✓" } else { "" },
+        ))
+        .default_open(false)
+        .show(ui, |ui| {
+            // Items-Übersicht
+            for it in &o.items {
+                let line_total = it.line_total_cents;
+                let mut title = format!("x{}  {}", it.qty, it.name);
+                if let Some(v) = &it.variant { title.push_str(&format!(" ({})", v)); }
+                if let Some(n) = &it.note {
+                    if !n.trim().is_empty() { title.push_str(&format!(" · {}", n.trim())); }
+                }
+
+                ui.horizontal(|ui| {
+                    ui.label(title);
+                    ui.monospace(eur(line_total));
+                });
+            }
+            ui.monospace(format!("Delivery fee: {}", eur(o.delivery_fee_cents)));
+            ui.separator();
+            ui.monospace(format!("Order total: {}", eur(order_total)));
+
+            // Zahlung
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("Cash received (cents):");
+                ui.add(egui::DragValue::new(paid_buf).range(0..=1_000_000));
+                let diff_lbl = if delta > 0 { "Change due" } else if delta < 0 { "Still to pay" } else { "Balanced" };
+                let color = if delta > 0 { egui::Color32::LIGHT_BLUE }
+                            else if delta < 0 { egui::Color32::YELLOW }
+                            else { egui::Color32::from_rgb(20,160,20) };
+                ui.colored_label(color, format!("{diff_lbl}: {}", eur(delta.abs())));
+            });
+
+            ui.horizontal(|ui| {
+                // Speichern -> paid_cents + completed in DB (optional Felder)
+                if ui.button("Save payment").clicked() {
+                    let _ = rt.block_on(orders::set_paid_cents(db, oid, paid_now, completed));
+                    // Lokaler Status bleibt über HashMap erhalten
+                }
+
+                // Bestellung löschen
+                if ui.button("Delete").clicked() {
+                    to_delete.push(oid);
+                }
+            });
+        });
+    }
+
+    // Löschungen ausführen
+    if !to_delete.is_empty() {
+        for id in &to_delete {
+            let _ = rt.block_on(orders::delete(db, *id));
+        }
+        // Re-load nach Löschungen
+        state.orders_needs_reload = true;
+        state.orders = rt.block_on(orders::list_by_supplier(db, sid)).unwrap_or_default();
+        // Puffer bereinigen / nachziehen
+        state.orders_paid_inputs.retain(|k, _| state.orders.iter().any(|o| o.id == Some(*k)));
+        for o in &state.orders {
+            if let Some(pid) = o.id {
+                state.orders_paid_inputs.entry(pid).or_insert(0);
+            }
+        }
+    }
+
+    ui.separator();
+    ui.heading(format!("Sum over all orders: {}", eur(total_all_cents)));
+}
+
 /* ---------------- Settings ---------------- */
 
 fn page_settings(
@@ -633,6 +777,8 @@ fn page_settings(
     db: &crate::db::Db,
     state: &mut AdminState,
 ) {
+    use crate::services::{backup, settings, suppliers};
+
     ui.heading("Settings");
     let sups = rt.block_on(suppliers::list(db)).unwrap_or_default();
     if sups.is_empty() { ui.label("No suppliers yet. Create one first."); return; }
@@ -672,7 +818,7 @@ fn page_settings(
             if state.backup_pass.is_empty() || state.backup_export_path.trim().is_empty() {
                 state.backup_msg = Some((false, "Bitte Passwort und Dateipfad ausfüllen.".into()));
             } else {
-                match rt.block_on(crate::services::backup::export_to_file(
+                match rt.block_on(backup::export_to_file(
                     db,
                     state.backup_export_path.trim(),
                     state.backup_pass.trim(),
@@ -691,7 +837,7 @@ fn page_settings(
             if state.backup_pass.is_empty() || state.backup_import_path.trim().is_empty() {
                 state.backup_msg = Some((false, "Bitte Passwort und Dateipfad ausfüllen.".into()));
             } else {
-                match rt.block_on(crate::services::backup::import_from_file(
+                match rt.block_on(backup::import_from_file(
                     db,
                     state.backup_import_path.trim(),
                     state.backup_pass.trim(),
@@ -707,7 +853,6 @@ fn page_settings(
         let color = if *ok { egui::Color32::from_rgb(20,160,20) } else { egui::Color32::RED };
         ui.colored_label(color, msg);
     }
-
 }
 
 fn id_to_name(sups: &[Supplier], id: ObjectId) -> String {
