@@ -57,10 +57,7 @@ impl Default for BestellApp {
             state: BestellAppState {
                 server_input,
                 remember_server: cfg.remember_server,
-                order_state: ui::order::OrderState {
-                    client_id: client_id.clone(),
-                    ..Default::default()
-                },
+                order_state: ui::order::OrderState::with_client_id(client_id.clone()),
                 admin_state: Default::default(),
                 ..Default::default()
             },
@@ -80,17 +77,15 @@ impl App for BestellApp {
                 ui.text_edit_singleline(&mut self.state.server_input);
                 ui.checkbox(&mut self.state.remember_server, "Remember this server");
                 if ui.button("Connect").clicked() {
-                    match self.rt.block_on(db::connect(&self.state.server_input)) {
+                    match self.rt.block_on(db::connect(&self.state.server_input.trim())) {
                         Ok(dbh) => {
                             self.state.connect_err = None;
 
                             let mut cfg = config::load().unwrap_or_default();
                             cfg.remember_server = self.state.remember_server;
                             cfg.mongo_uri = if self.state.remember_server {
-                                Some(self.state.server_input.clone())
-                            } else {
-                                None
-                            };
+                                Some(self.state.server_input.trim().to_string())
+                            } else { None };
                             if cfg.client_id.is_none() {
                                 cfg.client_id = Some(self.client_id.clone());
                             }
