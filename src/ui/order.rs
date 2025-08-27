@@ -136,278 +136,281 @@ pub fn render(
         return;
     }
 
-    ui.label(format!("Supplier: {}", state.supplier_name));
-    ui.label(format!("Delivery fee: {}", eur(state.delivery_fee_cents)));
+    // Ab hier alles scrollbar machen:
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        ui.label(format!("Supplier: {}", state.supplier_name));
+        ui.label(format!("Delivery fee: {}", eur(state.delivery_fee_cents)));
 
-    ui.separator();
-    ui.label("Your name");
-    ui.text_edit_singleline(&mut state.customer_name);
+        ui.separator();
+        ui.label("Your name");
+        ui.text_edit_singleline(&mut state.customer_name);
 
-    ui.separator();
-    ui.horizontal(|ui| {
-        if ui.button("+ Add dish").clicked() {
-            let last_idx = state.selections.last().map(|s| s.dish_idx).unwrap_or(0);
-            state.selections.push(ItemSel {
-                dish_idx: last_idx,
-                qty: 1,
-                size_idx: None,
-                note: String::new(),
-            });
-        }
-        if ui.button("− Remove last").clicked() && state.selections.len() > 1 {
-            state.selections.pop();
-        }
-    });
-
-    ui.separator();
-
-    // Kategorie-Tabs (Alle + pro Category)
-    ui.horizontal_wrapped(|ui| {
-        // "Alle"
-        let all_selected = state.selected_category.is_none();
-        if ui.selectable_label(all_selected, "Alle").clicked() {
-            state.selected_category = None;
-        }
-        // Kategorien
-        for c in &state.categories {
-            let sel = state.selected_category == c.id;
-            if ui.selectable_label(sel, c.name.clone()).clicked() {
-                state.selected_category = c.id;
+        ui.separator();
+        ui.horizontal(|ui| {
+            if ui.button("+ Add dish").clicked() {
+                let last_idx = state.selections.last().map(|s| s.dish_idx).unwrap_or(0);
+                state.selections.push(ItemSel {
+                    dish_idx: last_idx,
+                    qty: 1,
+                    size_idx: None,
+                    note: String::new(),
+                });
             }
-        }
-    });
+            if ui.button("− Remove last").clicked() && state.selections.len() > 1 {
+                state.selections.pop();
+            }
+        });
 
-    ui.separator();
-    ui.label("Dishes");
+        ui.separator();
 
-    for (i, sel) in state.selections.iter_mut().enumerate() {
-        ui.push_id(i, |ui| {
-            // Gefilterte Liste nach gewählter Kategorie
-            let filtered: Vec<(usize, &Dish)> = state
-                .dishes
-                .iter()
-                .enumerate()
-                .filter(|(_, d)| match state.selected_category {
-                    None => true,
-                    Some(cat) => d.categories.iter().any(|x| *x == cat),
-                })
-                .collect();
-
-            ui.group(|ui| {
-                // Falls die Kategorie leer ist
-                if filtered.is_empty() {
-                    ui.colored_label(egui::Color32::YELLOW, "No dishes in this category.");
-                    return;
+        // Kategorie-Tabs (Alle + pro Category)
+        ui.horizontal_wrapped(|ui| {
+            // "Alle"
+            let all_selected = state.selected_category.is_none();
+            if ui.selectable_label(all_selected, "Alle").clicked() {
+                state.selected_category = None;
+            }
+            // Kategorien
+            for c in &state.categories {
+                let sel = state.selected_category == c.id;
+                if ui.selectable_label(sel, c.name.clone()).clicked() {
+                    state.selected_category = c.id;
                 }
+            }
+        });
 
-                // Sicherstellen, dass die aktuelle Auswahl im Filter liegt
-                if !filtered.iter().any(|(idx, _)| *idx == sel.dish_idx) {
-                    if let Some((first_idx, _)) = filtered.first() {
-                        sel.dish_idx = *first_idx;
-                        sel.size_idx = None; // Size zurücksetzen, falls vorher Pizza war
+        ui.separator();
+        ui.label("Dishes");
+
+        for (i, sel) in state.selections.iter_mut().enumerate() {
+            ui.push_id(i, |ui| {
+                // Gefilterte Liste nach gewählter Kategorie
+                let filtered: Vec<(usize, &Dish)> = state
+                    .dishes
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, d)| match state.selected_category {
+                        None => true,
+                        Some(cat) => d.categories.iter().any(|x| *x == cat),
+                    })
+                    .collect();
+
+                ui.group(|ui| {
+                    // Falls die Kategorie leer ist
+                    if filtered.is_empty() {
+                        ui.colored_label(egui::Color32::YELLOW, "No dishes in this category.");
+                        return;
                     }
-                }
 
-                ui.horizontal(|ui| {
-                    ui.label(format!("Dish #{}", i + 1));
-                    let dcur = &state.dishes[sel.dish_idx];
-                    egui::ComboBox::from_id_salt(("dish_select", i))
-                        .selected_text(dish_label(dcur))
-                        .show_ui(ui, |cb| {
-                            for (idx, d) in &filtered {
-                                cb.selectable_value(&mut sel.dish_idx, *idx, dish_label(d));
-                            }
-                        });
-
-                    let d = &state.dishes[sel.dish_idx];
-                    if let Some(sizes) = &d.pizza_sizes {
-                        if sel.size_idx.is_none() && !sizes.is_empty() {
-                            sel.size_idx = Some(0);
+                    // Sicherstellen, dass die aktuelle Auswahl im Filter liegt
+                    if !filtered.iter().any(|(idx, _)| *idx == sel.dish_idx) {
+                        if let Some((first_idx, _)) = filtered.first() {
+                            sel.dish_idx = *first_idx;
+                            sel.size_idx = None; // Size zurücksetzen, falls vorher Pizza war
                         }
-                        let sidx = sel.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
-                        let scur = &sizes[sidx];
+                    }
 
-                        ui.label("Size");
-                        egui::ComboBox::from_id_salt(("size_select", i))
-                            .selected_text(format!("{} ({})", scur.label, eur(scur.price_cents)))
+                    ui.horizontal(|ui| {
+                        ui.label(format!("Dish #{}", i + 1));
+                        let dcur = &state.dishes[sel.dish_idx];
+                        egui::ComboBox::from_id_salt(("dish_select", i))
+                            .selected_text(dish_label(dcur))
                             .show_ui(ui, |cb| {
-                                for (j, s) in sizes.iter().enumerate() {
-                                    cb.selectable_value(
-                                        &mut sel.size_idx,
-                                        Some(j),
-                                        format!("{} ({})", s.label, eur(s.price_cents)),
-                                    );
+                                for (idx, d) in &filtered {
+                                    cb.selectable_value(&mut sel.dish_idx, *idx, dish_label(d));
                                 }
                             });
+
+                        let d = &state.dishes[sel.dish_idx];
+                        if let Some(sizes) = &d.pizza_sizes {
+                            if sel.size_idx.is_none() && !sizes.is_empty() {
+                                sel.size_idx = Some(0);
+                            }
+                            let sidx = sel.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
+                            let scur = &sizes[sidx];
+
+                            ui.label("Size");
+                            egui::ComboBox::from_id_salt(("size_select", i))
+                                .selected_text(format!("{} ({})", scur.label, eur(scur.price_cents)))
+                                .show_ui(ui, |cb| {
+                                    for (j, s) in sizes.iter().enumerate() {
+                                        cb.selectable_value(
+                                            &mut sel.size_idx,
+                                            Some(j),
+                                            format!("{} ({})", s.label, eur(s.price_cents)),
+                                        );
+                                    }
+                                });
+                        } else {
+                            ui.monospace(format!("Unit: {}", eur(d.price_cents)));
+                        }
+
+                        ui.add(
+                            egui::DragValue::new(&mut sel.qty)
+                                .range(1..=20)
+                                .prefix("Qty: "),
+                        );
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.label("Note (optional)");
+                        ui.text_edit_singleline(&mut sel.note);
+                    });
+
+                    let d = &state.dishes[sel.dish_idx];
+                    let unit = if let Some(sizes) = &d.pizza_sizes {
+                        let idx = sel.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
+                        sizes[idx].price_cents
                     } else {
-                        ui.monospace(format!("Unit: {}", eur(d.price_cents)));
-                    }
-
-                    ui.add(
-                        egui::DragValue::new(&mut sel.qty)
-                            .range(1..=20)
-                            .prefix("Qty: "),
-                    );
+                        d.price_cents
+                    } as i64;
+                    let line_total = unit * (sel.qty as i64);
+                    ui.monospace(format!("Line total: {}", eur(line_total)));
                 });
+            });
+        }
 
-                ui.horizontal(|ui| {
-                    ui.label("Note (optional)");
-                    ui.text_edit_singleline(&mut sel.note);
-                });
-
-                let d = &state.dishes[sel.dish_idx];
+        let items_total: i64 = state
+            .selections
+            .iter()
+            .map(|s| {
+                let d = &state.dishes[s.dish_idx];
                 let unit = if let Some(sizes) = &d.pizza_sizes {
-                    let idx = sel.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
+                    let idx = s.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
                     sizes[idx].price_cents
                 } else {
                     d.price_cents
                 } as i64;
-                let line_total = unit * (sel.qty as i64);
-                ui.monospace(format!("Line total: {}", eur(line_total)));
-            });
-        });
-    }
+                unit * (s.qty as i64)
+            })
+            .sum();
 
-    let items_total: i64 = state
-        .selections
-        .iter()
-        .map(|s| {
-            let d = &state.dishes[s.dish_idx];
-            let unit = if let Some(sizes) = &d.pizza_sizes {
-                let idx = s.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
-                sizes[idx].price_cents
-            } else {
-                d.price_cents
-            } as i64;
-            unit * (s.qty as i64)
-        })
-        .sum();
+        let grand_total = items_total + state.delivery_fee_cents;
 
-    let grand_total = items_total + state.delivery_fee_cents;
+        ui.separator();
+        ui.label("Summary");
+        ui.monospace(format!("Items total: {}", eur(items_total)));
+        ui.monospace(format!("Delivery fee: {}", eur(state.delivery_fee_cents)));
+        ui.monospace(format!("Grand total: {}", eur(grand_total)));
 
-    ui.separator();
-    ui.label("Summary");
-    ui.monospace(format!("Items total: {}", eur(items_total)));
-    ui.monospace(format!("Delivery fee: {}", eur(state.delivery_fee_cents)));
-    ui.monospace(format!("Grand total: {}", eur(grand_total)));
+        let can_submit = state.supplier_id.is_some()
+            && !state.customer_name.trim().is_empty()
+            && !state.selections.is_empty();
 
-    let can_submit = state.supplier_id.is_some()
-        && !state.customer_name.trim().is_empty()
-        && !state.selections.is_empty();
+        if ui.add_enabled(can_submit, egui::Button::new("Submit order")).clicked() {
+            if let Some(supplier_id) = state.supplier_id {
+                let items: Vec<(ObjectId, String, i32, i64, Option<String>, Option<String>)> = state
+                    .selections
+                    .iter()
+                    .map(|s| {
+                        let d = &state.dishes[s.dish_idx];
+                        if let Some(sizes) = &d.pizza_sizes {
+                            let idx = s.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
+                            let sz = &sizes[idx];
+                            let nr = d.number.clone().unwrap_or_default();
+                            let base = if nr.is_empty() {
+                                d.name.clone()
+                            } else {
+                                format!("Nr. {}: {}", nr, d.name)
+                            };
+                            let name = format!("{} ({})", base, sz.label);
+                            (
+                                d.id.unwrap(),
+                                name,
+                                s.qty,
+                                sz.price_cents as i64,
+                                if s.note.trim().is_empty() { None } else { Some(s.note.clone()) },
+                                Some(sz.label.clone()),
+                            )
+                        } else {
+                            let nr = d.number.clone().unwrap_or_default();
+                            let base = if nr.is_empty() {
+                                d.name.clone()
+                            } else {
+                                format!("Nr. {}: {}", nr, d.name)
+                            };
+                            (
+                                d.id.unwrap(),
+                                base,
+                                s.qty,
+                                d.price_cents as i64,
+                                if s.note.trim().is_empty() { None } else { Some(s.note.clone()) },
+                                None,
+                            )
+                        }
+                    })
+                    .collect();
 
-    if ui.add_enabled(can_submit, egui::Button::new("Submit order")).clicked() {
-        if let Some(supplier_id) = state.supplier_id {
-            let items: Vec<(ObjectId, String, i32, i64, Option<String>, Option<String>)> = state
-                .selections
-                .iter()
-                .map(|s| {
+                let mut lines: Vec<String> = Vec::new();
+                for s in &state.selections {
                     let d = &state.dishes[s.dish_idx];
-                    if let Some(sizes) = &d.pizza_sizes {
-                        let idx = s.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
-                        let sz = &sizes[idx];
-                        let nr = d.number.clone().unwrap_or_default();
-                        let base = if nr.is_empty() {
-                            d.name.clone()
-                        } else {
-                            format!("Nr. {}: {}", nr, d.name)
-                        };
-                        let name = format!("{} ({})", base, sz.label);
-                        (
-                            d.id.unwrap(),
-                            name,
-                            s.qty,
-                            sz.price_cents as i64,
-                            if s.note.trim().is_empty() { None } else { Some(s.note.clone()) },
-                            Some(sz.label.clone()),
-                        )
+                    let nr = d.number.clone().unwrap_or_default();
+                    let base = if nr.is_empty() {
+                        d.name.clone()
                     } else {
-                        let nr = d.number.clone().unwrap_or_default();
-                        let base = if nr.is_empty() {
-                            d.name.clone()
-                        } else {
-                            format!("Nr. {}: {}", nr, d.name)
-                        };
-                        (
-                            d.id.unwrap(),
-                            base,
-                            s.qty,
-                            d.price_cents as i64,
-                            if s.note.trim().is_empty() { None } else { Some(s.note.clone()) },
-                            None,
-                        )
+                        format!("Nr. {}: {}", nr, d.name)
+                    };
+
+                    let (unit_cents, size_hint) = if let Some(sizes) = &d.pizza_sizes {
+                        let idx = s.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
+                        (sizes[idx].price_cents as i64, Some(sizes[idx].label.clone()))
+                    } else {
+                        (d.price_cents as i64, None)
+                    };
+
+                    let mut line = if let Some(sz) = size_hint {
+                        format!("x{}  {} ({}) – {}", s.qty, base, sz, eur(unit_cents))
+                    } else {
+                        format!("x{}  {} – {}", s.qty, base, eur(unit_cents))
+                    };
+                    if !s.note.trim().is_empty() {
+                        line.push_str(&format!("  · Note: {}", s.note.trim()));
                     }
-                })
-                .collect();
-
-            let mut lines: Vec<String> = Vec::new();
-            for s in &state.selections {
-                let d = &state.dishes[s.dish_idx];
-                let nr = d.number.clone().unwrap_or_default();
-                let base = if nr.is_empty() {
-                    d.name.clone()
-                } else {
-                    format!("Nr. {}: {}", nr, d.name)
-                };
-
-                let (unit_cents, size_hint) = if let Some(sizes) = &d.pizza_sizes {
-                    let idx = s.size_idx.unwrap_or(0).min(sizes.len().saturating_sub(1));
-                    (sizes[idx].price_cents as i64, Some(sizes[idx].label.clone()))
-                } else {
-                    (d.price_cents as i64, None)
-                };
-
-                let mut line = if let Some(sz) = size_hint {
-                    format!("x{}  {} ({}) – {}", s.qty, base, sz, eur(unit_cents))
-                } else {
-                    format!("x{}  {} – {}", s.qty, base, eur(unit_cents))
-                };
-                if !s.note.trim().is_empty() {
-                    line.push_str(&format!("  · Note: {}", s.note.trim()));
+                    lines.push(line);
                 }
-                lines.push(line);
-            }
-            let total_cents = grand_total;
+                let total_cents = grand_total;
 
-            let res = rt.block_on(orders::create_with_notes(
-                db,
-                &state.customer_name,
-                supplier_id,
-                items,
-                state.delivery_fee_cents,
-                &state.client_id,
-            ));
+                let res = rt.block_on(orders::create_with_notes(
+                    db,
+                    &state.customer_name,
+                    supplier_id,
+                    items,
+                    state.delivery_fee_cents,
+                    &state.client_id,
+                ));
 
-            match res {
-                Ok(_) => {
-                    state.selections.clear();
-                    state.selections.push(ItemSel {
-                        dish_idx: 0,
-                        qty: 1,
-                        size_idx: None,
-                        note: String::new(),
-                    });
+                match res {
+                    Ok(_) => {
+                        state.selections.clear();
+                        state.selections.push(ItemSel {
+                            dish_idx: 0,
+                            qty: 1,
+                            size_idx: None,
+                            note: String::new(),
+                        });
 
-                    state.success_lines = lines;
-                    state.success_total_cents = total_cents;
-                    state.show_success = true;
-                }
-                Err(e) => {
-                    ui.colored_label(egui::Color32::RED, format!("Failed to submit: {e}"));
+                        state.success_lines = lines;
+                        state.success_total_cents = total_cents;
+                        state.show_success = true;
+                    }
+                    Err(e) => {
+                        ui.colored_label(egui::Color32::RED, format!("Failed to submit: {e}"));
+                    }
                 }
             }
         }
-    }
 
-    if state.show_success {
-        ui.add_space(6.0);
-        ui.colored_label(
-            egui::Color32::from_rgb(20, 160, 20),
-            "Order successfully forwarded to the person responsible."
-        );
-        ui.add_space(4.0);
-        for line in &state.success_lines {
-            ui.small(line);
+        if state.show_success {
+            ui.add_space(6.0);
+            ui.colored_label(
+                egui::Color32::from_rgb(20, 160, 20),
+                "Order successfully forwarded to the person responsible."
+            );
+            ui.add_space(4.0);
+            for line in &state.success_lines {
+                ui.small(line);
+            }
+            ui.small(format!("Total cost: {}", eur(state.success_total_cents)));
         }
-        ui.small(format!("Total cost: {}", eur(state.success_total_cents)));
-    }
+    });
 }
