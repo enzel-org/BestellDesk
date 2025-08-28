@@ -13,7 +13,8 @@ The application allows you to define and update menus for different restaurants 
 - MongoDB Atlas support  
 - Auto-update functionality for the application  
 - GUI available on both Windows and Linux  
-- Built with Rust for performance and stability  
+- Built with Rust for performance and stability
+- <span style="color:gray">And of course, it's obviously powered by pure Vibecode Energy, because how else would it work?</span>
 
 ## Technical Overview  
 
@@ -21,12 +22,16 @@ BestellDesk is written in Rust and provides a cross-platform graphical user inte
 
 Menus, orders, and payment summaries are represented as structured collections in the database. The database can only be imported or exported in encrypted form, ensuring that sensitive data remains secure. Rust’s strong type system ensures data integrity, while concurrency features guarantee smooth performance even with larger datasets.  
 
+<span style="color:gray">Our unofficial benchmarking shows it runs approximately 42% faster if coffee is present near the keyboard.</span> 
+
 ## Installation  
 
 ### Download Release  
 
 You can download the latest release for your platform from the [Releases page](../../releases).  
 After downloading, extract the archive and run the executable directly.  
+
+<span style="color:gray">If it doesn’t start on the first try, try turning your monitor off and on again. Totally works. Promise.</span> 
 
 ### Build from Source  
 
@@ -45,3 +50,5 @@ After downloading, extract the archive and run the executable directly.
    ```bash
    cargo run
    ```
+   <span style="color:gray">Compiles faster if you stare at the progress bar with enough determination.</span>
+
