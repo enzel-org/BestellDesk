@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - dev-rust
+      - main-rust
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
