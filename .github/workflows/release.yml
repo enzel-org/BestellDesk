@@ -85,7 +85,6 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # Uses default shell per runner (bash on Linux, pwsh on Windows)
       - name: Test (optional)
         run: cargo test --all-features --locked
 
@@ -94,16 +93,17 @@ jobs:
 
       - name: Strip binary (Linux)
         if: matrix.strip_cmd != ''
+        shell: bash
         run: |
           set -euo pipefail
           BIN_PATH="target/${{ matrix.target }}/release/${{ needs.prepare.outputs.crate_name }}"
           if [ -f "$BIN_PATH" ]; then
             ${{ matrix.strip_cmd }} "$BIN_PATH"
           fi
-        shell: bash
 
       - name: Package artifact (Windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $app = "${{ needs.prepare.outputs.crate_name }}"
@@ -115,10 +115,10 @@ jobs:
           if (!(Test-Path $binPath)) { throw "Binary not found: $binPath" }
           $zipPath = Join-Path $PWD "$outdir\$app-$version-$target.zip"
           Compress-Archive -Path $binPath -DestinationPath $zipPath -Force
-        shell: pwsh
 
       - name: Package artifact (Linux/macOS)
         if: runner.os != 'Windows'
+        shell: bash
         run: |
           set -euo pipefail
           APP="${{ needs.prepare.outputs.crate_name }}"
@@ -131,7 +131,6 @@ jobs:
           chmod +x "${APP}${{ matrix.bin_ext }}"
           tar -czf "${OUTDIR}/${APP}-${VERSION}-${TARGET}.tar.gz" "${APP}${{ matrix.bin_ext }}"
           rm "${APP}${{ matrix.bin_ext }}"
-        shell: bash
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -175,20 +174,18 @@ jobs:
           git tag -a "v${{ needs.prepare.outputs.crate_version }}" -m "Release v${{ needs.prepare.outputs.crate_version }}"
           git push origin "v${{ needs.prepare.outputs.crate_version }}"
 
-      - name: Create/Update GitHub Release
+      - name: Create/Update GitHub Release (auto-generated notes)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.prepare.outputs.crate_version }}
           name: ${{ needs.prepare.outputs.crate_name }} v${{ needs.prepare.outputs.crate_version }}
-          body: |
-            Automated release from Cargo.toml version.
-            - Name: ${{ needs.prepare.outputs.crate_name }}
-            - Version: ${{ needs.prepare.outputs.crate_version }}
+          generate_release_notes: true
           files: |
             dist/**/*.tar.gz
             dist/**/*.zip
             dist/SHA256SUMS.txt
           draft: false
           prerelease: false
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
