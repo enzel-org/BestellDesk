@@ -6,30 +6,44 @@ mod ui;
 mod services;
 
 use tokio::sync::mpsc;
-
 use eframe::{egui, App, Frame};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
+use crate::services::updater;
+
+const GH_OWNER: &str = "enzel-org";
+const GH_REPO:  &str = "BestellDesk";
+
 #[derive(Default)]
-struct BestellAppState {
+struct BestellDeskState {
+    // Order/Admin sub-state
     order_state: ui::order::OrderState,
     admin_state: ui::admin::AdminState,
 
+    // Setup / Connect
     server_input: String,
     remember_server: bool,
     connect_err: Option<String>,
 
+    // Current tab
     tab: ui::UiTab,
 
+    // Admin login
     admin_user: String,
     admin_pass: String,
     admin_authed: bool,
+
+    // Updater UI state
+    update_popup_open: bool,
+    update_info: Option<updater::UpdateInfo>,
+    update_error: Option<String>,
+    updating_now: bool,
 }
 
-struct BestellApp {
+struct BestellDesk {
     rt: Arc<Runtime>,
-    state: BestellAppState,
+    state: BestellDeskState,
     db: Option<db::Db>,
     rx: Option<mpsc::UnboundedReceiver<AppMsg>>,
     client_id: String,
@@ -42,7 +56,7 @@ enum AppMsg {
     OrdersChanged,
 }
 
-impl Default for BestellApp {
+impl Default for BestellDesk {
     fn default() -> Self {
         let mut cfg = config::load().unwrap_or_default();
         if cfg.client_id.is_none() {
@@ -52,13 +66,30 @@ impl Default for BestellApp {
         let client_id = cfg.client_id.clone().unwrap();
         let server_input = cfg.mongo_uri.clone().unwrap_or_default();
 
+        let rt = Arc::new(Runtime::new().expect("tokio runtime"));
+
+        // --- Update check at startup (public repo; no token required) ---
+        let current_ver = env!("CARGO_PKG_VERSION").to_string();
+        let mut update_info: Option<updater::UpdateInfo> = None;
+        match rt.block_on(updater::check_latest(GH_OWNER, GH_REPO, &current_ver)) {
+            Ok(Some(info)) => update_info = Some(info),
+            Ok(None) => {} // already up-to-date
+            Err(e) => eprintln!("Update check failed: {e:#}"),
+        }
+
         Self {
-            rt: Arc::new(Runtime::new().expect("tokio runtime")),
-            state: BestellAppState {
+            rt: rt.clone(),
+            state: BestellDeskState {
                 server_input,
                 remember_server: cfg.remember_server,
                 order_state: ui::order::OrderState::with_client_id(client_id.clone()),
                 admin_state: Default::default(),
+
+                update_popup_open: update_info.is_some(),
+                update_info,
+                update_error: None,
+                updating_now: false,
+
                 ..Default::default()
             },
             db: None,
@@ -68,8 +99,77 @@ impl Default for BestellApp {
     }
 }
 
-impl App for BestellApp {
+impl App for BestellDesk {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
+        // ----- UPDATE POPUP -----
+        if self.state.update_popup_open {
+            // local copy of the state
+            let mut open = self.state.update_popup_open;
+            // flag toggled inside the closure
+            let mut request_close = false;
+
+            egui::Window::new("Update available")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(true)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    if let Some(info) = &self.state.update_info {
+                        ui.heading(format!("New version: {}", info.tag));
+                        ui.separator();
+                        ui.label("Release notes:");
+                        egui::ScrollArea::vertical()
+                            .max_height(240.0)
+                            .show(ui, |ui| ui.label(&info.notes));
+                        ui.add_space(8.0);
+
+                        if let Some(err) = &self.state.update_error {
+                            ui.colored_label(egui::Color32::RED, err);
+                            ui.add_space(6.0);
+                        }
+
+                        ui.horizontal(|ui| {
+                            if !self.state.updating_now {
+                                if ui.button("Install now").clicked() {
+                                    self.state.updating_now = true;
+                                    match self.rt.block_on(updater::download_and_extract(info)) {
+                                        Ok(new_exe) => {
+                                            if let Err(e) = updater::spawn_replacer_and_exit(&new_exe) {
+                                                self.state.update_error = Some(format!("{e:#}"));
+                                                self.state.updating_now = false;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            self.state.update_error = Some(format!("{e:#}"));
+                                            self.state.updating_now = false;
+                                        }
+                                    }
+                                }
+                                if ui.button("Later").clicked() {
+                                    // only set the flag; do NOT touch `open` itself!
+                                    request_close = true;
+                                }
+                            } else {
+                                ui.label("Installing…");
+                            }
+                        });
+                    } else {
+                        ui.label("No update information.");
+                    }
+                });
+
+            // After show(): close `open` if requested
+            if request_close {
+                open = false;
+                // so it does not reappear later in the session
+                self.state.update_info = None;
+            }
+
+            // write back window state
+            self.state.update_popup_open = open;
+        }
+
+        // ----- Connection setup -----
         if self.db.is_none() {
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.heading("First-time setup");
@@ -114,6 +214,7 @@ impl App for BestellApp {
             return;
         }
 
+        // ----- Top navigation -----
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.selectable_label(self.state.tab == ui::UiTab::Order, "Order").clicked() {
@@ -131,6 +232,7 @@ impl App for BestellApp {
             });
         });
 
+        // ----- Watcher messages -----
         if let Some(rx) = &mut self.rx {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
@@ -155,6 +257,7 @@ impl App for BestellApp {
             }
         }
 
+        // ----- Content -----
         egui::CentralPanel::default().show(ctx, |ui| match self.state.tab {
             ui::UiTab::Order => ui::render_order(
                 ui,
@@ -179,9 +282,15 @@ fn main() -> eframe::Result<()> {
     tracing_subscriber::fmt().init();
 
     let opts = eframe::NativeOptions::default();
+
+    // Read current version from Cargo.toml (injected at compile time)
+    let version = env!("CARGO_PKG_VERSION");
+    let title = format!("BestellDesk v{}", version);
+
+    // Run native application with version in window title
     eframe::run_native(
-        "BestellDesk",
+        &title,
         opts,
-        Box::new(|_cc| Ok(Box::<BestellApp>::default())),
+        Box::new(|_cc| Ok(Box::<BestellDesk>::default())),
     )
 }
