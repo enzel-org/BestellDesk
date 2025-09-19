@@ -282,8 +282,14 @@ fn main() -> eframe::Result<()> {
     tracing_subscriber::fmt().init();
 
     let opts = eframe::NativeOptions::default();
+
+    // Read current version from Cargo.toml (injected at compile time)
+    let version = env!("CARGO_PKG_VERSION");
+    let title = format!("BestellDesk v{}", version);
+
+    // Run native application with version in window title
     eframe::run_native(
-        "BestellDesk",
+        &title,
         opts,
         Box::new(|_cc| Ok(Box::<BestellDesk>::default())),
     )
