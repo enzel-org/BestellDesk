@@ -59,7 +59,7 @@ fn encrypt(password: &str, plaintext: &[u8]) -> Result<EncBlob> {
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
     let mut salt = [0u8; 16];
-    getrandom::getrandom(&mut salt).map_err(|e| anyhow::anyhow!("getrandom salt: {e}"))?;
+    getrandom::fill(&mut salt).map_err(|e| anyhow::anyhow!("getrandom salt: {e}"))?;
 
     let mut key_bytes = [0u8; 32];
     argon
@@ -70,7 +70,7 @@ fn encrypt(password: &str, plaintext: &[u8]) -> Result<EncBlob> {
     let cipher = Aes256Gcm::new(key);
 
     let mut nonce = [0u8; 12];
-    getrandom::getrandom(&mut nonce).map_err(|e| anyhow::anyhow!("getrandom nonce: {e}"))?;
+    getrandom::fill(&mut nonce).map_err(|e| anyhow::anyhow!("getrandom nonce: {e}"))?;
 
     let ct = cipher
         .encrypt(GenericArray::from_slice(&nonce), plaintext)
