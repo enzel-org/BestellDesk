@@ -1,6 +1,6 @@
 [package]
 name = "BestellDesk"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2024"
 
 [dependencies]
@@ -24,4 +24,4 @@ nanoid = "0.4.0"
 aes-gcm = "0.10.3"
 aes = "0.8.4"
 base64 = "0.22.1"
-getrandom = "*"
+getrandom = "0.3"
