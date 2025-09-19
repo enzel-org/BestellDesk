@@ -68,12 +68,10 @@ jobs:
             target: x86_64-unknown-linux-gnu
             bin_ext: ""
             strip_cmd: "strip"
-            shell: bash
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             bin_ext: ".exe"
             strip_cmd: ""
-            shell: pwsh
 
     steps:
       - name: Checkout
@@ -87,13 +85,12 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      # Uses default shell per runner (bash on Linux, pwsh on Windows)
       - name: Test (optional)
         run: cargo test --all-features --locked
-        shell: ${{ matrix.shell }}
 
       - name: Build release
         run: cargo build --release --target ${{ matrix.target }}
-        shell: ${{ matrix.shell }}
 
       - name: Strip binary (Linux)
         if: matrix.strip_cmd != ''
