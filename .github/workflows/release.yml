@@ -1,0 +1,197 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev-rust
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - ".github/workflows/release.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Read name & version from Cargo.toml
+    runs-on: ubuntu-latest
+    outputs:
+      crate_name: ${{ steps.meta.outputs.name }}
+      crate_version: ${{ steps.meta.outputs.version }}
+      tag_exists: ${{ steps.check_tag.outputs.exists }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Parse Cargo.toml (name, version)
+        id: meta
+        run: |
+          python - << 'PY'
+import tomllib, sys, pathlib
+data = tomllib.load(open("Cargo.toml","rb"))
+pkg = data.get("package") or {}
+name = pkg.get("name")
+version = pkg.get("version")
+if not name or not version:
+    print("Missing [package].name or [package].version in Cargo.toml", file=sys.stderr)
+    sys.exit(1)
+print(f"name={name}")
+print(f"version={version}")
+PY
+          CRATE_NAME=$(python - << 'PY'
+import tomllib
+d = tomllib.load(open("Cargo.toml","rb"))
+print(d["package"]["name"])
+PY
+)
+          CRATE_VERSION=$(python - << 'PY'
+import tomllib
+d = tomllib.load(open("Cargo.toml","rb"))
+print(d["package"]["version"])
+PY
+)
+          echo "name=$CRATE_NAME" >> $GITHUB_OUTPUT
+          echo "version=$CRATE_VERSION" >> $GITHUB_OUTPUT
+          echo "CRATE_NAME=$CRATE_NAME" >> $GITHUB_ENV
+          echo "CRATE_VERSION=$CRATE_VERSION" >> $GITHUB_ENV
+
+      - name: Check if tag v${{ env.CRATE_VERSION }} exists
+        id: check_tag
+        run: |
+          git fetch --tags --quiet
+          if git rev-parse -q --verify "refs/tags/v${CRATE_VERSION}" >/dev/null; then
+            echo "exists=true"  >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    name: Build (${{ matrix.os }} / ${{ matrix.target }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin_ext: ""
+            strip_cmd: "strip"
+            shell: bash
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin_ext: ".exe"
+            strip_cmd: ""
+            shell: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test (optional but recommended)
+        run: cargo test --all-features --locked
+        shell: ${{ matrix.shell }}
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+        shell: ${{ matrix.shell }}
+
+      - name: Strip binary (Linux)
+        if: matrix.strip_cmd != ''
+        run: |
+          BIN_PATH="target/${{ matrix.target }}/release/${{ needs.prepare.outputs.crate_name }}"
+          if [ -f "$BIN_PATH" ]; then
+            ${{ matrix.strip_cmd }} "$BIN_PATH"
+          fi
+        shell: bash
+
+      - name: Package artifact
+        run: |
+          APP="${{ needs.prepare.outputs.crate_name }}"
+          TARGET="${{ matrix.target }}"
+          VERSION="${{ needs.prepare.outputs.crate_version }}"
+          OUTDIR="dist"
+          mkdir -p "$OUTDIR"
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            powershell -Command ^
+              "$zipPath = Join-Path $PWD '$OUTDIR\\${APP}-${VERSION}-${TARGET}.zip';" ^
+              "Compress-Archive -Path target\\${TARGET}\\release\\${APP}${{ matrix.bin_ext }} -DestinationPath $zipPath"
+          else
+            cp "target/${TARGET}/release/${APP}${{ matrix.bin_ext }}" "${APP}${{ matrix.bin_ext }}"
+            chmod +x "${APP}${{ matrix.bin_ext }}"
+            tar -czf "${OUTDIR}/${APP}-${VERSION}-${TARGET}.tar.gz" "${APP}${{ matrix.bin_ext }}"
+            rm "${APP}${{ matrix.bin_ext }}"
+          fi
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+
+  release:
+    name: Create Git tag and GitHub Release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) -print0 | xargs -0 sha256sum > SHA256SUMS.txt
+
+      - name: Create tag v${{ needs.prepare.outputs.crate_version }} if missing
+        if: needs.prepare.outputs.tag_exists == 'false'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ needs.prepare.outputs.crate_version }}" -m "Release v${{ needs.prepare.outputs.crate_version }}"
+          git push origin "v${{ needs.prepare.outputs.crate_version }}"
+
+      - name: Create/Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.prepare.outputs.crate_version }}
+          name: ${{ needs.prepare.outputs.crate_name }} v${{ needs.prepare.outputs.crate_version }}
+          body: |
+            Automated release from Cargo.toml version.
+            - Name: ${{ needs.prepare.outputs.crate_name }}
+            - Version: ${{ needs.prepare.outputs.crate_version }}
+          files: |
+            dist/**/*.tar.gz
+            dist/**/*.zip
+            dist/SHA256SUMS.txt
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
