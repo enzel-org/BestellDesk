@@ -39,8 +39,8 @@ After downloading, extract the archive and run the executable directly.
 2. Set up [MongoDB Atlas](https://www.mongodb.com/atlas/database).  
 3. Clone this repository:  
    ```bash
-   git clone https://github.com/enzel-org/bestellapp.git
-   cd bestelldesk
+   git clone https://github.com/enzel-org/BestellDesk.git
+   cd BestellDesk
    ```
 4. Build the project:
    ```bash
@@ -51,4 +51,5 @@ After downloading, extract the archive and run the executable directly.
    cargo run
    ```
    <span style="color:gray">Compiles faster if you stare at the progress bar with enough determination.</span>
+
 
