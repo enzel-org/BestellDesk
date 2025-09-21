@@ -22,9 +22,13 @@ struct BestellDeskState {
     admin_state: ui::admin::AdminState,
 
     // Setup / Connect
-    server_input: String,
+    server_input: String,          // MongoDB URI (direct or filled from agent)
     remember_server: bool,
     connect_err: Option<String>,
+
+    // Agent Login
+    agent_host: String,            // e.g. "agent.morwa.de:8443" or full URL
+    agent_err: Option<String>,
 
     // Current tab
     tab: ui::UiTab,
@@ -58,6 +62,7 @@ enum AppMsg {
 
 impl Default for BestellDesk {
     fn default() -> Self {
+        // Load persisted config and ensure client_id
         let mut cfg = config::load().unwrap_or_default();
         if cfg.client_id.is_none() {
             cfg.client_id = Some(uuid::Uuid::new_v4().to_string());
@@ -65,15 +70,16 @@ impl Default for BestellDesk {
         }
         let client_id = cfg.client_id.clone().unwrap();
         let server_input = cfg.mongo_uri.clone().unwrap_or_default();
+        let agent_host  = cfg.agent_host.clone().unwrap_or_default();
 
         let rt = Arc::new(Runtime::new().expect("tokio runtime"));
 
-        // --- Update check at startup (public repo; no token required) ---
+        // --- Update check at startup ---
         let current_ver = env!("CARGO_PKG_VERSION").to_string();
         let mut update_info: Option<updater::UpdateInfo> = None;
         match rt.block_on(updater::check_latest(GH_OWNER, GH_REPO, &current_ver)) {
             Ok(Some(info)) => update_info = Some(info),
-            Ok(None) => {} // already up-to-date
+            Ok(None) => {}
             Err(e) => eprintln!("Update check failed: {e:#}"),
         }
 
@@ -84,6 +90,10 @@ impl Default for BestellDesk {
                 remember_server: cfg.remember_server,
                 order_state: ui::order::OrderState::with_client_id(client_id.clone()),
                 admin_state: Default::default(),
+
+                // Prefill agent input from config
+                agent_host,
+                agent_err: None,
 
                 update_popup_open: update_info.is_some(),
                 update_info,
@@ -103,9 +113,9 @@ impl App for BestellDesk {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
         // ----- UPDATE POPUP -----
         if self.state.update_popup_open {
-            // local copy of the state
+            // local copy of the state for the .open() handle
             let mut open = self.state.update_popup_open;
-            // flag toggled inside the closure
+            // flag toggled inside the closure to request closing the window
             let mut request_close = false;
 
             egui::Window::new("Update available")
@@ -146,7 +156,7 @@ impl App for BestellDesk {
                                     }
                                 }
                                 if ui.button("Later").clicked() {
-                                    // only set the flag; do NOT touch `open` itself!
+                                    // only set the flag; do NOT modify `open` directly inside the closure
                                     request_close = true;
                                 }
                             } else {
@@ -158,10 +168,10 @@ impl App for BestellDesk {
                     }
                 });
 
-            // After show(): close `open` if requested
+            // After show(): honor close request
             if request_close {
                 open = false;
-                // so it does not reappear later in the session
+                // Also clear update_info so it does not pop up again later
                 self.state.update_info = None;
             }
 
@@ -172,25 +182,79 @@ impl App for BestellDesk {
         // ----- Connection setup -----
         if self.db.is_none() {
             egui::CentralPanel::default().show(ctx, |ui| {
-                ui.heading("First-time setup");
+                ui.heading("Connect to MongoDB");
+
+                // Direct Mongo URI (legacy/manual way)
                 ui.label("Enter MongoDB connection string (e.g., mongodb+srv://user:pass@host/db)");
                 ui.text_edit_singleline(&mut self.state.server_input);
+
+                ui.add_space(8.0);
+
+                // Agent login: resolves to a Mongo URI via your agent
+                ui.label("Agent login (host:port or full URL)");
+                ui.horizontal(|ui| {
+                    ui.text_edit_singleline(&mut self.state.agent_host);
+                });
+                if let Some(aerr) = &self.state.agent_err {
+                    ui.colored_label(egui::Color32::YELLOW, format!("Agent hint: {aerr}"));
+                }
+
+                ui.add_space(6.0);
                 ui.checkbox(&mut self.state.remember_server, "Remember this server");
+
                 if ui.button("Connect").clicked() {
-                    match self.rt.block_on(db::connect(&self.state.server_input.trim())) {
+                    // Decide which URI to use
+                    let mut used_agent = false;
+                    let mut uri_to_use = self.state.server_input.trim().to_string();
+
+                    if !self.state.agent_host.trim().is_empty() {
+                        // Resolve via agent
+                        match self.rt.block_on(services::agent_client::fetch_mongo_uri(&self.state.agent_host)) {
+                            Ok(agent_uri) => {
+                                uri_to_use = agent_uri;
+                                self.state.agent_err = None;
+                                self.state.server_input = uri_to_use.clone();
+                                used_agent = true;
+                            }
+                            Err(e) => {
+                                self.state.agent_err = Some(format!("{e:#}"));
+                                self.state.connect_err = Some("Agent lookup failed".into());
+                                return;
+                            }
+                        }
+                    }
+
+                    // Connect to MongoDB
+                    match self.rt.block_on(db::connect(uri_to_use.trim())) {
                         Ok(dbh) => {
                             self.state.connect_err = None;
 
+                            // Persist selection
                             let mut cfg = config::load().unwrap_or_default();
                             cfg.remember_server = self.state.remember_server;
-                            cfg.mongo_uri = if self.state.remember_server {
-                                Some(self.state.server_input.trim().to_string())
-                            } else { None };
+
+                            if self.state.remember_server {
+                                if used_agent {
+                                    // Save the agent endpoint and clear direct URI
+                                    cfg.agent_host = Some(self.state.agent_host.trim().to_string());
+                                    cfg.mongo_uri  = None;
+                                } else {
+                                    // Save direct URI and clear agent endpoint
+                                    cfg.mongo_uri  = Some(self.state.server_input.trim().to_string());
+                                    cfg.agent_host = None;
+                                }
+                            } else {
+                                // clear both
+                                cfg.mongo_uri  = None;
+                                cfg.agent_host = None;
+                            }
+
                             if cfg.client_id.is_none() {
                                 cfg.client_id = Some(self.client_id.clone());
                             }
                             let _ = config::save(&cfg);
 
+                            // Spawn watchers...
                             let (tx, rx) = mpsc::unbounded_channel::<AppMsg>();
                             let db_clone = dbh.clone();
                             self.rt.spawn(db::watch_settings(db_clone.clone(), tx.clone()));
@@ -206,7 +270,8 @@ impl App for BestellDesk {
                         }
                         Err(e) => self.state.connect_err = Some(format!("{e:#}")),
                     }
-                }
+}
+
                 if let Some(err) = &self.state.connect_err {
                     ui.colored_label(egui::Color32::RED, err);
                 }
@@ -223,12 +288,6 @@ impl App for BestellDesk {
                 if ui.selectable_label(self.state.tab == ui::UiTab::Admin, "Admin").clicked() {
                     self.state.tab = ui::UiTab::Admin;
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Reconnect").clicked() {
-                        self.db = None;
-                        self.rx = None;
-                    }
-                });
             });
         });
 
@@ -257,7 +316,7 @@ impl App for BestellDesk {
             }
         }
 
-        // ----- Content -----
+        // ----- Main content -----
         egui::CentralPanel::default().show(ctx, |ui| match self.state.tab {
             ui::UiTab::Order => ui::render_order(
                 ui,

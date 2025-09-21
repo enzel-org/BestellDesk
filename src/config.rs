@@ -7,6 +7,7 @@ pub struct LocalConfig {
     pub mongo_uri: Option<String>,
     pub remember_server: bool,
     pub client_id: Option<String>, 
+    pub agent_host: Option<String>,
 }
 
 fn config_path() -> anyhow::Result<PathBuf> {

@@ -6,3 +6,4 @@ pub mod admin_users;
 pub mod categories;
 pub mod backup;
 pub mod updater;
+pub mod agent_client;
