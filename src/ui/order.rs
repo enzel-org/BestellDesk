@@ -202,25 +202,52 @@ pub fn render(
                         return;
                     }
 
-                    // Sicherstellen, dass die aktuelle Auswahl im Filter liegt
-                    if !filtered.iter().any(|(idx, _)| *idx == sel.dish_idx) {
+                    // Build filtered list by category
+                    let filtered: Vec<(usize, &Dish)> = state
+                        .dishes
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, d)| match state.selected_category {
+                            None => true,
+                            Some(cat) => d.categories.iter().any(|x| *x == cat),
+                        })
+                        .collect();
+
+                    // Make sure current selection is always in the options,
+                    // even if it doesn't match the filter.
+                    let mut options: Vec<(usize, &Dish)> = filtered.clone();
+
+                    let current_idx_ok = sel.dish_idx < state.dishes.len();
+                    if current_idx_ok {
+                        let cur_in_filter = filtered.iter().any(|(idx, _)| *idx == sel.dish_idx);
+                        if !cur_in_filter {
+                            // Prepend current dish so it stays selectable/visible
+                            options.insert(0, (sel.dish_idx, &state.dishes[sel.dish_idx]));
+                        }
+                    } else {
+                        // Safety: if dish index became invalid (menu changed), fall back to first filtered (if any)
                         if let Some((first_idx, _)) = filtered.first() {
                             sel.dish_idx = *first_idx;
-                            sel.size_idx = None; // Size zurücksetzen, falls vorher Pizza war
+                            sel.size_idx = None;
                         }
                     }
 
+                    // UI: show the current dish label; if it’s outside the filter, annotate it
+                    let dcur = &state.dishes[sel.dish_idx];
+                    let mut current_label = dish_label(dcur);
+
                     ui.horizontal(|ui| {
                         ui.label(format!("Dish #{}", i + 1));
-                        let dcur = &state.dishes[sel.dish_idx];
+
                         egui::ComboBox::from_id_salt(("dish_select", i))
-                            .selected_text(dish_label(dcur))
+                            .selected_text(current_label)
                             .show_ui(ui, |cb| {
-                                for (idx, d) in &filtered {
+                                for (idx, d) in &options {
                                     cb.selectable_value(&mut sel.dish_idx, *idx, dish_label(d));
                                 }
                             });
 
+                        // Size / price UI unchanged:
                         let d = &state.dishes[sel.dish_idx];
                         if let Some(sizes) = &d.pizza_sizes {
                             if sel.size_idx.is_none() && !sizes.is_empty() {
@@ -245,11 +272,7 @@ pub fn render(
                             ui.monospace(format!("Unit: {}", eur(d.price_cents)));
                         }
 
-                        ui.add(
-                            egui::DragValue::new(&mut sel.qty)
-                                .range(1..=20)
-                                .prefix("Qty: "),
-                        );
+                        ui.add(egui::DragValue::new(&mut sel.qty).range(1..=20).prefix("Qty: "));
                     });
 
                     ui.horizontal(|ui| {
